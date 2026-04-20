@@ -1,3 +1,4 @@
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..config import get_requests_session
