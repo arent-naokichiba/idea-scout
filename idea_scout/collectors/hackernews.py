@@ -4,6 +4,7 @@ from ..config import get_requests_session
 from ..models import CollectedItem
 
 BASE_URL = "https://hacker-news.firebaseio.com/v0"
+ALGOLIA_URL = "https://hn.algolia.com/api/v1/search"
 
 
 class HackerNewsCollector:
@@ -14,9 +15,12 @@ class HackerNewsCollector:
         self.session = get_requests_session()
 
     def collect(self) -> list[CollectedItem]:
-        """トップストーリーとベストストーリーの和集合から上位を取得"""
+        """トップストーリーとベストストーリーの和集合から上位を取得。Firebase APIが不可の場合はAlgoliaにフォールバック"""
         top_ids = self._fetch_story_ids("topstories")
         best_ids = self._fetch_story_ids("beststories")
+
+        if not top_ids and not best_ids:
+            return self._collect_via_algolia()
 
         # 重複排除して上位を取得
         seen = set()
@@ -32,6 +36,35 @@ class HackerNewsCollector:
         # スコア順にソート
         items.sort(key=lambda x: x.score, reverse=True)
         return items[:self.max_items]
+
+    def _collect_via_algolia(self) -> list[CollectedItem]:
+        """Algolia Search APIでフロントページ記事を取得"""
+        try:
+            resp = self.session.get(
+                ALGOLIA_URL,
+                params={"tags": "front_page", "hitsPerPage": self.max_items},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            hits = resp.json().get("hits", [])
+            items = []
+            for h in hits:
+                title = h.get("title", "")
+                url = h.get("url") or f"https://news.ycombinator.com/item?id={h.get('objectID', '')}"
+                score = h.get("points", 0) or 0
+                comments = h.get("num_comments", 0) or 0
+                items.append(CollectedItem(
+                    source="hackernews",
+                    title=title,
+                    url=url,
+                    description=f"Points: {score}, Comments: {comments}",
+                    score=score,
+                ))
+            items.sort(key=lambda x: x.score, reverse=True)
+            return items[:self.max_items]
+        except Exception as e:
+            print(f"[HN] Algolia フォールバックも失敗: {e}")
+            return []
 
     def _fetch_story_ids(self, endpoint: str) -> list[int]:
         try:
@@ -66,5 +99,5 @@ class HackerNewsCollector:
                 description=f"Points: {data.get('score', 0)}, Comments: {data.get('descendants', 0)}",
                 score=data.get("score", 0),
             )
-        except requests.RequestException:
+        except Exception:
             return None
