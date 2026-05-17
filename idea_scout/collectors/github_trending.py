@@ -44,13 +44,14 @@ class GitHubTrendingCollector:
         soup = BeautifulSoup(html, "html.parser")
         items = []
 
-        for article in soup.select("article.Box-row"):
+        for article in soup.find_all("article", class_="Box-row"):
             try:
                 # リポジトリ名
-                h2 = article.select_one("h2 a")
-                if not h2:
+                h2 = article.find("h2")
+                h2_a = h2.find("a") if h2 else None
+                if not h2_a:
                     continue
-                repo_path = h2.get("href", "").strip("/")
+                repo_path = h2_a.get("href", "").strip("/")
                 if not repo_path:
                     continue
 
@@ -58,24 +59,24 @@ class GitHubTrendingCollector:
                 url = f"https://github.com/{repo_path}"
 
                 # 説明文
-                desc_elem = article.select_one("p")
+                desc_elem = article.find("p")
                 description = desc_elem.get_text(strip=True) if desc_elem else ""
 
                 # スター数
                 stars = 0
-                star_elem = article.select_one("a[href$='/stargazers']")
+                star_elem = article.find("a", href=lambda h: h and h.endswith("/stargazers"))
                 if star_elem:
                     star_text = star_elem.get_text(strip=True).replace(",", "")
                     stars = int(star_text) if star_text.isdigit() else 0
 
                 # 今日のスター増分
-                today_stars_elem = article.select_one("span.d-inline-block.float-sm-right")
+                today_stars_elem = article.find("span", class_="d-inline-block")
                 today_stars = ""
                 if today_stars_elem:
                     today_stars = today_stars_elem.get_text(strip=True)
 
                 # 言語
-                lang_elem = article.select_one("span[itemprop='programmingLanguage']")
+                lang_elem = article.find("span", itemprop="programmingLanguage")
                 lang = lang_elem.get_text(strip=True) if lang_elem else ""
 
                 tags = [lang] if lang else []

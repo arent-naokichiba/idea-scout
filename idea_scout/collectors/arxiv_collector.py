@@ -1,3 +1,4 @@
+import time
 import xml.etree.ElementTree as ET
 
 from ..config import get_requests_session
@@ -25,7 +26,9 @@ class ArXivCollector:
         items = []
         per_category = max(1, self.max_items // len(self.categories))
 
-        for cat in self.categories:
+        for i, cat in enumerate(self.categories):
+            if i > 0:
+                time.sleep(3)
             new_items = self._search_category(cat, per_category)
             items.extend(new_items)
 
@@ -40,24 +43,27 @@ class ArXivCollector:
         return unique[:self.max_items]
 
     def _search_category(self, category: str, max_results: int) -> list[CollectedItem]:
-        try:
-            # HTTP (not HTTPS) でアクセス — arXivはHTTPもサポート
-            resp = self.session.get(
-                ARXIV_API_URL,
-                params={
-                    "search_query": f"cat:{category}",
-                    "sortBy": "submittedDate",
-                    "sortOrder": "descending",
-                    "start": 0,
-                    "max_results": max_results,
-                },
-                timeout=30,
-            )
-            resp.raise_for_status()
-            return self._parse_atom(resp.text, category)
-        except Exception as e:
-            print(f"[arXiv] {category} の取得に失敗: {e}")
-            return []
+        for attempt in range(3):
+            try:
+                resp = self.session.get(
+                    ARXIV_API_URL,
+                    params={
+                        "search_query": f"cat:{category}",
+                        "sortBy": "submittedDate",
+                        "sortOrder": "descending",
+                        "start": 0,
+                        "max_results": max_results,
+                    },
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                return self._parse_atom(resp.text, category)
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(5 * (attempt + 1))
+                else:
+                    print(f"[arXiv] {category} の取得に失敗: {e}")
+        return []
 
     def _parse_atom(self, xml_text: str, default_category: str) -> list[CollectedItem]:
         items = []
