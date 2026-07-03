@@ -93,15 +93,42 @@ function flyToJapan(duration = 1.5) {
 }
 
 // ============================================================
-// API
+// API（ローカルサーバ or 静的モードを自動判定）
 // ============================================================
+let apiBackendPromise = null;
+
+function resolveApiBackend() {
+  if (!apiBackendPromise) {
+    apiBackendPromise = (async () => {
+      // ローカルサーバ（plateau_viewer.py）の有無を1回だけ確認する
+      try {
+        const resp = await fetch("api/prefs");
+        if (resp.ok && (resp.headers.get("content-type") || "").includes("json")) {
+          return "server";
+        }
+      } catch (e) { /* サーバなし */ }
+      console.info("[PLATEAU Viewer] 静的モードで動作します（カタログを直接取得）");
+      const overlay = $("loadingOverlay");
+      if (!overlay.classList.contains("hidden")) {
+        overlay.lastElementChild.textContent = "カタログを取得しています（初回は少し時間がかかります）...";
+      }
+      return "static";
+    })();
+  }
+  return apiBackendPromise;
+}
+
 async function api(path, params = {}) {
+  const backend = await resolveApiBackend();
+  if (backend === "static") {
+    return PlateauStaticApi.call(path, params);
+  }
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== "") q.set(k, v);
   }
   const qs = q.toString();
-  const resp = await fetch(`/api/${path}${qs ? "?" + qs : ""}`);
+  const resp = await fetch(`api/${path}${qs ? "?" + qs : ""}`);
   if (!resp.ok) throw new Error(`API ${path} failed: ${resp.status}`);
   return resp.json();
 }
