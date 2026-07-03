@@ -121,7 +121,13 @@ function toast(msg, ms = 2600) {
 // ============================================================
 // レイヤー管理
 // ============================================================
+// モバイルのドロワーを閉じる（デスクトップでは何もしない）
+function closeDrawer() {
+  $("sidebar").classList.remove("open");
+}
+
 async function addDataset(dataset, options = {}) {
+  closeDrawer();
   if (state.layers.some((l) => l.id === dataset.id)) {
     toast("すでに追加されています: " + dataset.name);
     return state.layers.find((l) => l.id === dataset.id);
@@ -363,6 +369,7 @@ const HAZARD_OVERLAYS = {
 function addHazardLayer(id, options = {}) {
   const def = HAZARD_OVERLAYS[id];
   if (!def) return null;
+  closeDrawer();
   if (state.layers.some((l) => l.id === id)) {
     toast("すでに追加されています: " + def.name);
     return state.layers.find((l) => l.id === id);
@@ -2118,6 +2125,10 @@ ${statsHtml}
 // ============================================================
 // サイドバーのタブ・属性パネル・ダイアログ
 // ============================================================
+// モバイル: サイドバーのドロワー開閉
+$("menuBtn").onclick = () => $("sidebar").classList.toggle("open");
+$("cesiumContainer").addEventListener("pointerdown", () => $("sidebar").classList.remove("open"));
+
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.onclick = () => {
     document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));

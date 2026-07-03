@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import json
+import socket
 import threading
 import webbrowser
 from functools import partial
@@ -112,6 +113,16 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             super().log_message(format, *args)
 
 
+def get_lan_ip() -> str | None:
+    """このマシンのLAN側IPアドレスを取得する（パケットは送信しない）"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except OSError:
+        return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="PLATEAU Viewer - 3D都市モデルビューア"
@@ -119,7 +130,11 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="バインドするホスト（デフォルト: 127.0.0.1）")
     parser.add_argument("--port", type=int, default=8765, help="ポート番号（デフォルト: 8765）")
     parser.add_argument("--no-browser", action="store_true", help="ブラウザを自動で開かない")
+    parser.add_argument("--lan", action="store_true",
+                        help="同一Wi-Fi内のスマートフォン等からアクセス可能にする（0.0.0.0にバインド）")
     args = parser.parse_args()
+
+    host = "0.0.0.0" if args.lan else args.host
 
     print("[PLATEAU Viewer] カタログを準備中...")
     client = PlateauClient()
@@ -128,9 +143,20 @@ def main() -> None:
     handler = partial(ViewerHandler, directory=str(VIEWER_DIR))
     ViewerHandler.plateau = client
 
-    server = ThreadingHTTPServer((args.host, args.port), handler)
-    url = f"http://{args.host}:{args.port}/"
+    server = ThreadingHTTPServer((host, args.port), handler)
+    url = f"http://{'127.0.0.1' if host == '0.0.0.0' else host}:{args.port}/"
     print(f"[PLATEAU Viewer] 起動しました: {url}")
+    if host == "0.0.0.0":
+        lan_ip = get_lan_ip()
+        if lan_ip:
+            print()
+            print("  ┌─ スマートフォンからのアクセス ─────────────────")
+            print(f"  │ 同じWi-Fiに接続したスマホのブラウザで開いてください:")
+            print(f"  │   http://{lan_ip}:{args.port}/")
+            print("  │ ※ 初回はOSのファイアウォールの許可が必要な場合があります")
+            print("  └───────────────────────────────────")
+    else:
+        print("  スマホから使う場合は --lan を付けて起動してください。")
     print("  終了するには Ctrl+C を押してください。")
 
     if not args.no_browser:
