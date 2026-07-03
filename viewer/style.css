@@ -100,6 +100,7 @@ select, input[type=text] {
   border: 1px solid var(--border); border-radius: 12px; cursor: pointer;
 }
 .qs:hover { border-color: var(--accent); color: var(--accent); }
+.qs-options { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; }
 
 #searchForm { display: flex; flex-direction: column; gap: 7px; margin-bottom: 10px; }
 #searchForm .row { display: flex; gap: 6px; }
@@ -151,6 +152,18 @@ button.primary:hover { background: var(--accent); }
 }
 .icon-btn:hover { color: var(--fg); }
 .icon-btn.danger:hover { color: var(--danger); }
+
+/* MVTレイヤーの凡例 */
+.legend {
+  margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 3px;
+  max-height: 180px; overflow-y: auto;
+}
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--fg); }
+.legend-chip {
+  width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,.25);
+}
 
 /* ---------- 3Dビュー ---------- */
 #cesiumContainer { flex: 1; position: relative; min-width: 0; }

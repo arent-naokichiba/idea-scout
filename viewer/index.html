@@ -38,7 +38,9 @@
       🕒 <input id="timeSlider" type="range" min="5" max="20" step="0.25" value="12">
       <span id="timeLabel">12:00</span>
     </label>
-    <button id="measureBtn" class="tbtn" title="距離計測（クリックで測点追加 / ダブルクリックで終了）">📏 計測</button>
+    <button id="measureBtn" class="tbtn" title="距離計測（クリックで測点追加 / ダブルクリックで確定）">📏 距離</button>
+    <button id="areaBtn" class="tbtn" title="面積計測（3点以上クリック / ダブルクリックで確定）">⬠ 面積</button>
+    <button id="walkBtn" class="tbtn" title="歩行者視点（クリック地点に立つ / WASDで移動）">🚶 歩行</button>
     <button id="screenshotBtn" class="tbtn" title="スクリーンショットを保存">📷</button>
     <button id="shareBtn" class="tbtn" title="現在の表示状態のURLをコピー">🔗 共有</button>
     <button id="fpsBtn" class="tbtn" title="FPS表示">FPS</button>
@@ -66,6 +68,10 @@
           <button class="qs" data-city="名古屋市" data-label="名古屋市">名古屋</button>
           <button class="qs" data-city="札幌市" data-label="札幌市">札幌</button>
           <button class="qs" data-city="福岡市" data-label="福岡市">福岡</button>
+        </div>
+        <div class="qs-options">
+          <label class="chk"><input id="qsUrf" type="checkbox"> 用途地域を重ねる（都市計画）</label>
+          <label class="chk"><input id="qsFlood" type="checkbox"> 洪水浸水想定を重ねる（防災）</label>
         </div>
       </div>
 
@@ -112,7 +118,7 @@
   <!-- 右: 属性パネル -->
   <aside id="attrPanel" class="hidden">
     <div class="panel-head">
-      <span>地物の属性</span>
+      <span id="attrTitle">地物の属性</span>
       <div>
         <button id="attrCopyBtn" class="tbtn" title="JSONとしてコピー">コピー</button>
         <button id="attrCloseBtn" class="tbtn">✕</button>
@@ -143,6 +149,8 @@
 
 <div id="toast" class="hidden"></div>
 
+<script src="vendor/mvt.js"></script>
+<script src="mvt-layer.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

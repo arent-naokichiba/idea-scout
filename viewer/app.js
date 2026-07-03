@@ -117,18 +117,22 @@ function toast(msg, ms = 2600) {
 // レイヤー管理
 // ============================================================
 async function addDataset(dataset, options = {}) {
-  if (dataset.format !== "3D Tiles") {
-    toast("このデータセットの形式（" + dataset.format + "）は3D表示に未対応です");
-    return null;
-  }
   if (state.layers.some((l) => l.id === dataset.id)) {
     toast("すでに追加されています: " + dataset.name);
     return state.layers.find((l) => l.id === dataset.id);
+  }
+  if (dataset.format === "MVT") {
+    return addMvtLayer(dataset, options);
+  }
+  if (dataset.format !== "3D Tiles") {
+    toast("このデータセットの形式（" + dataset.format + "）は3D表示に未対応です");
+    return null;
   }
 
   const layer = {
     id: dataset.id,
     dataset,
+    kind: "tiles",
     tileset: null,
     visible: options.visible !== false,
     style: options.style || "default",
@@ -194,6 +198,73 @@ async function addDataset(dataset, options = {}) {
   }
 }
 
+// MVT（都市計画決定情報・土地利用など）をイメージレイヤーとして追加する
+async function addMvtLayer(dataset, options = {}) {
+  const layer = {
+    id: dataset.id,
+    dataset,
+    kind: "mvt",
+    imageryLayer: null,
+    provider: null,
+    visible: options.visible !== false,
+    opacity: options.opacity != null ? options.opacity : 0.8,
+    home: null,
+    legendCount: 0,
+    loading: false,
+  };
+
+  const provider = new MvtImageryProvider({
+    urlTemplate: dataset.url,
+    onLegend: (legend) => {
+      // 凡例のカテゴリが増えたときだけレイヤーパネルを再描画
+      if (legend.size !== layer.legendCount) {
+        layer.legendCount = legend.size;
+        renderLayerList();
+      }
+    },
+  });
+  layer.provider = provider;
+  layer.imageryLayer = new Cesium.ImageryLayer(provider, {
+    alpha: layer.opacity,
+    show: layer.visible,
+  });
+  viewer.imageryLayers.add(layer.imageryLayer);
+
+  state.layers.push(layer);
+  renderLayerList();
+  saveState();
+  requestRender();
+  toast("追加しました: " + dataset.name);
+
+  // 対象自治体へ移動（MVTはズーム10以上で表示されるため）
+  resolveMvtHome(layer).then(() => {
+    if (options.fly !== false && layer.home) flyToMvtHome(layer);
+  });
+  return layer;
+}
+
+async function resolveMvtHome(layer) {
+  const d = layer.dataset;
+  const query = (d.pref || "") + (d.ward || d.city || "");
+  if (!query) return;
+  try {
+    const results = await api("geocode", { q: query });
+    if (Array.isArray(results) && results.length > 0) {
+      const [lon, lat] = results[0].geometry.coordinates;
+      layer.home = { lon, lat };
+    }
+  } catch (e) { /* ジオコーダ不通時はズーム移動なし */ }
+}
+
+function flyToMvtHome(layer) {
+  if (!layer.home) return;
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(layer.home.lon, layer.home.lat - 0.05, 9000),
+    orientation: { heading: 0, pitch: Cesium.Math.toRadians(-55), roll: 0 },
+    duration: 1.8,
+  });
+}
+
 async function addDatasetById(id, options = {}) {
   try {
     const dataset = await api("dataset", { id });
@@ -206,6 +277,7 @@ async function addDatasetById(id, options = {}) {
 
 function removeLayer(layer) {
   if (layer.tileset) viewer.scene.primitives.remove(layer.tileset);
+  if (layer.imageryLayer) viewer.imageryLayers.remove(layer.imageryLayer);
   state.layers = state.layers.filter((l) => l !== layer);
   clearSelection();
   renderLayerList();
@@ -287,6 +359,7 @@ function renderLayerList() {
     const eye = iconBtn(layer.visible ? "👁" : "🚫", "表示/非表示", () => {
       layer.visible = !layer.visible;
       if (layer.tileset) layer.tileset.show = layer.visible;
+      if (layer.imageryLayer) layer.imageryLayer.show = layer.visible;
       renderLayerList();
       saveState();
       requestRender();
@@ -299,6 +372,7 @@ function renderLayerList() {
 
     const zoomBtn = iconBtn("🎯", "このレイヤーに移動", () => {
       if (layer.tileset) viewer.flyTo(layer.tileset, { duration: 1.2 });
+      else if (layer.kind === "mvt") flyToMvtHome(layer);
     });
     const infoBtn = iconBtn("ℹ️", "詳細", () => showDetail(layer.dataset));
     const delBtn = iconBtn("🗑", "削除", () => removeLayer(layer));
@@ -316,26 +390,28 @@ function renderLayerList() {
       continue;
     }
 
-    // 色分けスタイル
-    const styleRow = document.createElement("div");
-    styleRow.className = "layer-row";
-    const styleSel = document.createElement("select");
-    const styles = [["default", "標準（テクスチャ）"], ["white", "単色（白）"]];
-    if (layer.heightProp) styles.push(["height", "高さで色分け"]);
-    for (const [v, label] of styles) {
-      const opt = document.createElement("option");
-      opt.value = v;
-      opt.textContent = label;
-      if (layer.style === v) opt.selected = true;
-      styleSel.appendChild(opt);
+    // 色分けスタイル（3D Tilesのみ）
+    if (layer.kind !== "mvt") {
+      const styleRow = document.createElement("div");
+      styleRow.className = "layer-row";
+      const styleSel = document.createElement("select");
+      const styles = [["default", "標準（テクスチャ）"], ["white", "単色（白）"]];
+      if (layer.heightProp) styles.push(["height", "高さで色分け"]);
+      for (const [v, label] of styles) {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = label;
+        if (layer.style === v) opt.selected = true;
+        styleSel.appendChild(opt);
+      }
+      styleSel.onchange = () => {
+        layer.style = styleSel.value;
+        applyLayerStyle(layer);
+        saveState();
+      };
+      styleRow.append("表示", styleSel);
+      li.appendChild(styleRow);
     }
-    styleSel.onchange = () => {
-      layer.style = styleSel.value;
-      applyLayerStyle(layer);
-      saveState();
-    };
-    styleRow.append("表示", styleSel);
-    li.appendChild(styleRow);
 
     // 不透明度
     const opRow = document.createElement("div");
@@ -348,11 +424,32 @@ function renderLayerList() {
     opSlider.value = layer.opacity;
     opSlider.oninput = () => {
       layer.opacity = parseFloat(opSlider.value);
-      applyLayerStyle(layer);
+      if (layer.kind === "mvt") {
+        layer.imageryLayer.alpha = layer.opacity;
+        requestRender();
+      } else {
+        applyLayerStyle(layer);
+      }
     };
     opSlider.onchange = saveState;
     opRow.append("透明度", opSlider);
     li.appendChild(opRow);
+
+    // 凡例（MVTのみ・描画済みカテゴリから動的生成）
+    if (layer.kind === "mvt" && layer.provider && layer.provider.legend.size > 0) {
+      const legend = document.createElement("div");
+      legend.className = "legend";
+      for (const [label, color] of layer.provider.legend) {
+        const item = document.createElement("div");
+        item.className = "legend-item";
+        const chip = document.createElement("span");
+        chip.className = "legend-chip";
+        chip.style.background = color;
+        item.append(chip, label);
+        legend.appendChild(item);
+      }
+      li.appendChild(legend);
+    }
 
     // 高さフィルタ
     if (layer.heightProp) {
@@ -455,10 +552,9 @@ function renderSearchResults(results) {
     actions.className = "result-actions";
     const addBtn = document.createElement("button");
     addBtn.className = "tbtn";
-    if (d.format !== "3D Tiles") {
+    if (d.format !== "3D Tiles" && d.format !== "MVT") {
       addBtn.textContent = "表示未対応";
       addBtn.disabled = true;
-      addBtn.title = "MVT等の形式は現在3D表示に未対応です";
     } else if (state.layers.some((l) => l.id === d.id)) {
       addBtn.textContent = "追加済み";
       addBtn.disabled = true;
@@ -507,6 +603,37 @@ async function quickStart(cityName, label) {
       results.find((d) => d.id.includes("lod1")) ||
       results[0];
     await addDataset(pick);
+
+    // 防災セット: 洪水浸水想定区域を半透明で重ねる
+    if ($("qsFlood").checked) {
+      const floods = await api("datasets", {
+        city: cityName, type: "洪水浸水想定区域モデル", format: "3D Tiles", limit: 500,
+      });
+      if (floods.length === 0) {
+        toast(`${label}の洪水浸水想定区域モデルが見つかりません`);
+        return;
+      }
+      // 国管理河川・想定最大規模（l2）を優先し、最も範囲が広い（=サイズが大きい）ものを選ぶ
+      const natl = floods.filter((d) => d.id.includes("_natl_"));
+      const pool = natl.length > 0 ? natl : floods;
+      const l2 = pool.filter((d) => /_l2(_|$)/.test(d.id));
+      const flood = (l2.length > 0 ? l2 : pool)
+        .sort((a, b) => (b.file_size || 0) - (a.file_size || 0))[0];
+      await addDataset(flood, { opacity: 0.55, fly: false });
+    }
+
+    // 都市計画セット: 用途地域を重ねる
+    if ($("qsUrf").checked) {
+      const urfs = await api("datasets", {
+        city: cityName, type: "都市計画決定情報モデル", format: "MVT", limit: 500,
+      });
+      const useDistrict = urfs.find((d) => (d.layers || []).includes("UseDistrict"));
+      if (useDistrict) {
+        await addDataset(useDistrict, { fly: false });
+      } else {
+        toast(`${label}の用途地域データが見つかりません`);
+      }
+    }
   } catch (e) {
     toast("クイックスタートに失敗しました: " + e.message);
   }
@@ -542,8 +669,9 @@ function showDetail(dataset) {
   $("detailCopyUrlBtn").onclick = () => copyText(dataset.url, "URLをコピーしました");
   const addBtn = $("detailAddBtn");
   const added = state.layers.some((l) => l.id === dataset.id);
-  addBtn.disabled = added || dataset.format !== "3D Tiles";
-  addBtn.textContent = added ? "追加済み" : dataset.format !== "3D Tiles" ? "表示未対応" : "マップに追加";
+  const displayable = dataset.format === "3D Tiles" || dataset.format === "MVT";
+  addBtn.disabled = added || !displayable;
+  addBtn.textContent = added ? "追加済み" : !displayable ? "表示未対応" : "マップに追加";
   addBtn.onclick = () => {
     $("detailDialog").close();
     addDataset(dataset);
@@ -581,6 +709,10 @@ pickHandler.setInputAction((movement) => {
     measureAddPoint(movement.position);
     return;
   }
+  if (walkState.arming) {
+    startWalkAt(movement.position);
+    return;
+  }
   const picked = viewer.scene.pick(movement.position);
   clearSelection();
   if (picked instanceof Cesium.Cesium3DTileFeature) {
@@ -588,9 +720,26 @@ pickHandler.setInputAction((movement) => {
     selectedOriginalColor = Cesium.Color.clone(picked.color);
     picked.color = Cesium.Color.fromCssColorString("#ffd166");
     showAttributes(picked);
-  } else {
-    $("attrPanel").classList.add("hidden");
+    requestRender();
+    return;
   }
+  // 3D地物がなければMVTレイヤー（都市計画情報等）の属性を拾う
+  if (state.layers.some((l) => l.kind === "mvt" && l.visible)) {
+    const ray = viewer.camera.getPickRay(movement.position);
+    const promise = ray && viewer.imageryLayers.pickImageryLayerFeatures(ray, viewer.scene);
+    if (promise) {
+      promise.then((features) => {
+        if (features && features.length > 0) {
+          showRawAttributes(features[0].properties, features[0].name);
+        } else {
+          $("attrPanel").classList.add("hidden");
+        }
+        requestRender();
+      });
+      return;
+    }
+  }
+  $("attrPanel").classList.add("hidden");
   requestRender();
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
@@ -601,7 +750,12 @@ function showAttributes(feature) {
     if (value === undefined || value === null || value === "") continue;
     attrs[key] = value;
   }
+  showRawAttributes(attrs, "地物の属性");
+}
+
+function showRawAttributes(attrs, title) {
   currentAttrs = attrs;
+  $("attrTitle").textContent = title || "地物の属性";
   renderAttributes();
   $("attrPanel").classList.remove("hidden");
 }
@@ -632,15 +786,70 @@ function renderAttributes() {
 }
 
 // ============================================================
-// 距離計測
+// 計測（距離・面積）
 // ============================================================
-const measureState = { active: false, positions: [], entities: [] };
+const MEASURE_COLOR = Cesium.Color.fromCssColorString("#ffd166");
+const measureState = { active: false, mode: "distance", positions: [], entities: [] };
 
-function toggleMeasure(on) {
-  measureState.active = on !== undefined ? on : !measureState.active;
-  $("measureBtn").classList.toggle("active", measureState.active);
-  $("measureHint").classList.toggle("hidden", !measureState.active);
-  if (!measureState.active) measureFinish(false);
+function measureClear() {
+  for (const e of measureState.entities) viewer.entities.remove(e);
+  measureState.entities = [];
+  measureState.positions = [];
+  requestRender();
+}
+
+function startMeasure(mode) {
+  measureClear();
+  measureState.active = true;
+  measureState.mode = mode;
+  updateMeasureUI();
+}
+
+function stopMeasure(commit) {
+  if (commit && measureState.mode === "area" && measureState.positions.length >= 3) {
+    const area = polygonArea(measureState.positions);
+    const text = area >= 10000 ? (area / 10000).toFixed(2) + " ha" : area.toFixed(1) + " m²";
+    const centroid = Cesium.Cartesian3.midpoint(
+      measureState.positions[0],
+      measureState.positions[Math.floor(measureState.positions.length / 2)],
+      new Cesium.Cartesian3()
+    );
+    measureState.entities.push(viewer.entities.add({
+      position: centroid,
+      label: measureLabel(text),
+    }));
+  }
+  if (!commit) measureClear();
+  measureState.active = false;
+  measureState.positions = [];
+  updateMeasureUI();
+  requestRender();
+}
+
+function updateMeasureUI() {
+  $("measureBtn").classList.toggle("active", measureState.active && measureState.mode === "distance");
+  $("areaBtn").classList.toggle("active", measureState.active && measureState.mode === "area");
+  const hint = $("measureHint");
+  if (measureState.active) {
+    hint.textContent = measureState.mode === "distance"
+      ? "クリックで測点を追加 / ダブルクリックで確定 / Escで中止"
+      : "クリックで頂点を追加（3点以上） / ダブルクリックで面積確定 / Escで中止";
+    hint.classList.remove("hidden");
+  } else {
+    hint.classList.add("hidden");
+  }
+}
+
+function measureLabel(text) {
+  return {
+    text,
+    font: "13px sans-serif",
+    fillColor: Cesium.Color.WHITE,
+    showBackground: true,
+    backgroundColor: Cesium.Color.fromCssColorString("#14181e").withAlpha(0.85),
+    pixelOffset: new Cesium.Cartesian2(0, -18),
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+  };
 }
 
 function pickPosition(windowPos) {
@@ -661,7 +870,7 @@ function measureAddPoint(windowPos) {
 
   measureState.entities.push(viewer.entities.add({
     position: pos,
-    point: { pixelSize: 7, color: Cesium.Color.fromCssColorString("#ffd166"), disableDepthTestDistance: Number.POSITIVE_INFINITY },
+    point: { pixelSize: 7, color: MEASURE_COLOR, disableDepthTestDistance: Number.POSITIVE_INFINITY },
   }));
 
   const n = measureState.positions.length;
@@ -669,58 +878,143 @@ function measureAddPoint(windowPos) {
     const a = measureState.positions[n - 2];
     const b = measureState.positions[n - 1];
     measureState.entities.push(viewer.entities.add({
-      polyline: { positions: [a, b], width: 2.5, material: Cesium.Color.fromCssColorString("#ffd166") },
+      polyline: { positions: [a, b], width: 2.5, material: MEASURE_COLOR },
     }));
+  }
+
+  if (measureState.mode === "distance" && n >= 2) {
     let total = 0;
     for (let i = 1; i < n; i++) {
       total += Cesium.Cartesian3.distance(measureState.positions[i - 1], measureState.positions[i]);
     }
-    const label = total >= 1000 ? (total / 1000).toFixed(2) + " km" : total.toFixed(1) + " m";
+    const text = total >= 1000 ? (total / 1000).toFixed(2) + " km" : total.toFixed(1) + " m";
     measureState.entities.push(viewer.entities.add({
-      position: b,
-      label: {
-        text: label,
-        font: "13px sans-serif",
-        fillColor: Cesium.Color.WHITE,
-        showBackground: true,
-        backgroundColor: Cesium.Color.fromCssColorString("#14181e").withAlpha(0.85),
-        pixelOffset: new Cesium.Cartesian2(0, -18),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      position: measureState.positions[n - 1],
+      label: measureLabel(text),
+    }));
+  }
+
+  if (measureState.mode === "area" && n === 3) {
+    // 3点そろったらプレビューポリゴンを表示（頂点追加に自動追従）
+    measureState.entities.push(viewer.entities.add({
+      polygon: {
+        hierarchy: new Cesium.CallbackProperty(
+          () => new Cesium.PolygonHierarchy(measureState.positions.slice()), false),
+        material: MEASURE_COLOR.withAlpha(0.25),
+        perPositionHeight: true,
+        outline: false,
       },
     }));
   }
   requestRender();
 }
 
-function measureFinish(keepResult = true) {
-  if (!keepResult) {
-    for (const e of measureState.entities) viewer.entities.remove(e);
-    measureState.entities = [];
+// 面積（局所平面に投影してシューレース法。都市スケールでは十分な精度）
+function polygonArea(positions) {
+  const enu = Cesium.Transforms.eastNorthUpToFixedFrame(positions[0]);
+  const inv = Cesium.Matrix4.inverse(enu, new Cesium.Matrix4());
+  const pts = positions.map((p) => Cesium.Matrix4.multiplyByPoint(inv, p, new Cesium.Cartesian3()));
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    area += a.x * b.y - b.x * a.y;
   }
-  measureState.positions = [];
-  requestRender();
+  return Math.abs(area) / 2;
 }
 
 pickHandler.setInputAction(() => {
   if (measureState.active) {
-    // 計測を確定して計測モードを抜ける（結果は残す）
-    measureState.positions = [];
-    toggleMeasure(false);
-    toast("計測を終了しました（もう一度📏を押すと結果をクリア）");
+    stopMeasure(true);
+    toast("計測を確定しました（📏/⬠ボタンでクリア）");
   }
 }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && measureState.active) toggleMeasure(false);
-});
-
 $("measureBtn").onclick = () => {
-  if (!measureState.active && measureState.entities.length > 0) {
-    // 前回の結果が残っていればクリアしてから開始
-    measureFinish(false);
-  }
-  toggleMeasure();
+  if (measureState.active && measureState.mode === "distance") stopMeasure(false);
+  else startMeasure("distance");
 };
+$("areaBtn").onclick = () => {
+  if (measureState.active && measureState.mode === "area") stopMeasure(false);
+  else startMeasure("area");
+};
+
+// ============================================================
+// 歩行者視点モード
+// ============================================================
+const walkState = { active: false, arming: false, prevCamera: null };
+
+$("walkBtn").onclick = () => {
+  if (walkState.active || walkState.arming) {
+    exitWalk();
+  } else {
+    walkState.arming = true;
+    $("walkBtn").classList.add("active");
+    const hint = $("measureHint");
+    hint.textContent = "立ちたい地点をクリックしてください（Escで中止）";
+    hint.classList.remove("hidden");
+  }
+};
+
+function startWalkAt(windowPos) {
+  const pos = pickPosition(windowPos);
+  walkState.arming = false;
+  if (!Cesium.defined(pos)) {
+    exitWalk();
+    return;
+  }
+  walkState.prevCamera = getCameraState();
+  walkState.active = true;
+  const carto = Cesium.Cartographic.fromCartesian(pos);
+  viewer.camera.setView({
+    destination: Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, carto.height + 1.7),
+    orientation: { heading: viewer.camera.heading, pitch: 0, roll: 0 },
+  });
+  const hint = $("measureHint");
+  hint.textContent = "歩行者視点: W/S=前後 A/D=左右 ←/→=旋回 Q/E=高さ Shift=速く Esc=終了";
+  hint.classList.remove("hidden");
+  requestRender();
+}
+
+function exitWalk() {
+  const wasActive = walkState.active;
+  walkState.active = false;
+  walkState.arming = false;
+  $("walkBtn").classList.remove("active");
+  $("measureHint").classList.add("hidden");
+  if (wasActive && walkState.prevCamera) {
+    setCameraState(walkState.prevCamera, 1.2);
+    walkState.prevCamera = null;
+  }
+  if (measureState.active) updateMeasureUI(); // 計測中のヒント表示を復元
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (walkState.active || walkState.arming) exitWalk();
+    else if (measureState.active) stopMeasure(false);
+    return;
+  }
+  if (!walkState.active) return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
+  const step = e.shiftKey ? 6 : 1.5;
+  const camera = viewer.camera;
+  const key = e.key.toLowerCase();
+  let handled = true;
+  if (key === "w" || e.key === "ArrowUp") camera.moveForward(step);
+  else if (key === "s" || e.key === "ArrowDown") camera.moveBackward(step);
+  else if (key === "a") camera.moveLeft(step);
+  else if (key === "d") camera.moveRight(step);
+  else if (e.key === "ArrowLeft") camera.setView({ orientation: { heading: camera.heading - Cesium.Math.toRadians(4), pitch: camera.pitch, roll: 0 } });
+  else if (e.key === "ArrowRight") camera.setView({ orientation: { heading: camera.heading + Cesium.Math.toRadians(4), pitch: camera.pitch, roll: 0 } });
+  else if (key === "q") camera.moveUp(step);
+  else if (key === "e") camera.moveDown(step);
+  else handled = false;
+  if (handled) {
+    e.preventDefault();
+    requestRender();
+  }
+});
 
 // ============================================================
 // 住所検索（国土地理院ジオコーダ）
