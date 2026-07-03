@@ -49,6 +49,10 @@ python main.py --full
 2. **ソース別一覧** — 全項目をテーブル形式で表示（関連性スコア付き）
 3. **統計** — 収集数・注目候補数のサマリー
 
+## 付属ツール
+
+- **PLATEAU CLI** (`plateau_cli.py`) — 国土交通省 Project PLATEAU の3D都市モデルを検索・ダウンロードするツール。詳細は [docs/PLATEAU.md](PLATEAU.md) を参照。
+
 ## アーキテクチャ
 
 ```
