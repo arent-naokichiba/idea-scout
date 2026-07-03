@@ -36,13 +36,21 @@
     <button id="shadowBtn" class="tbtn" title="影のON/OFF">影</button>
     <button id="terrainBtn" class="tbtn" title="地形の起伏（地理院標高タイル）">⛰ 地形</button>
     <button id="compareBtn" class="tbtn" title="左右比較（レイヤーごとに表示側を指定して比較）">⇔ 比較</button>
-    <label class="ctrl hidden" id="timeCtrl" title="時刻（日照シミュレーション）">
+    <span class="ctrl hidden" id="timeCtrl" title="時刻（日照シミュレーション）">
       🕒 <input id="timeSlider" type="range" min="5" max="20" step="0.25" value="12">
       <span id="timeLabel">12:00</span>
-    </label>
+      <button id="sunPlayBtn" class="tbtn" title="日影アニメーション（1日の影の動きを再生）">▶</button>
+      <select id="dateSelect" title="日付（日影規制の検討は冬至日が基準）">
+        <option value="today">今日</option>
+        <option value="equinox">春分</option>
+        <option value="summer">夏至</option>
+        <option value="winter">冬至</option>
+      </select>
+    </span>
     <button id="measureBtn" class="tbtn" title="距離計測（クリックで測点追加 / ダブルクリックで確定）">📏 距離</button>
     <button id="areaBtn" class="tbtn" title="面積計測（3点以上クリック / ダブルクリックで確定）">⬠ 面積</button>
     <button id="walkBtn" class="tbtn" title="歩行者視点（クリック地点に立つ / WASDで移動）">🚶 歩行</button>
+    <button id="clipBtn" class="tbtn" title="断面クリップ（2点クリックで断面線を指定 / Rキーで反転 / 再クリックで解除）">✂ 断面</button>
     <button id="screenshotBtn" class="tbtn" title="スクリーンショットを保存">📷</button>
     <button id="shareBtn" class="tbtn" title="現在の表示状態のURLをコピー">🔗 共有</button>
     <button id="fpsBtn" class="tbtn" title="FPS表示">FPS</button>
@@ -154,6 +162,10 @@
 <dialog id="statsDialog">
   <div class="panel-head"><span id="statsTitle"></span><button id="statsCloseBtn" class="tbtn">✕</button></div>
   <div id="statsBody"></div>
+  <div class="dialog-actions">
+    <button id="statsCsvBtn" class="tbtn" title="集計対象の建物属性をCSVで保存（Excel対応）">CSVエクスポート</button>
+    <button id="statsGeojsonBtn" class="tbtn" title="建物中心点+属性をGeoJSONで保存（QGIS等で利用可）">GeoJSONエクスポート</button>
+  </div>
 </dialog>
 
 <div id="toast" class="hidden"></div>

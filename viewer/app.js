@@ -166,6 +166,7 @@ async function addDataset(dataset, options = {}) {
     tileset.show = layer.visible;
     viewer.scene.primitives.add(tileset);
     applySplit(layer);
+    applyClipToLayer(layer);
 
     // 高さ属性の検出（tileset.jsonのproperties由来）
     const props = tileset.properties;
@@ -743,6 +744,10 @@ pickHandler.setInputAction((movement) => {
     startWalkAt(movement.position);
     return;
   }
+  if (clipState.arming) {
+    clipAddPoint(movement.position);
+    return;
+  }
   const picked = viewer.scene.pick(movement.position);
   clearSelection();
   if (picked instanceof Cesium.Cesium3DTileFeature) {
@@ -970,6 +975,91 @@ $("areaBtn").onclick = () => {
 };
 
 // ============================================================
+// 断面クリップ
+// ============================================================
+const clipState = { active: false, arming: false, points: [], inverted: false };
+
+$("clipBtn").onclick = () => {
+  if (clipState.active || clipState.arming) {
+    clearClip();
+    return;
+  }
+  clipState.arming = true;
+  clipState.points = [];
+  clipState.inverted = false;
+  $("clipBtn").classList.add("active");
+  showHint("断面線の始点をクリックしてください（Escで中止）");
+};
+
+function clipAddPoint(windowPos) {
+  const pos = pickPosition(windowPos);
+  if (!Cesium.defined(pos)) return;
+  clipState.points.push(pos);
+  if (clipState.points.length === 1) {
+    showHint("断面線の終点をクリックしてください");
+    return;
+  }
+  clipState.arming = false;
+  clipState.active = true;
+  applyClipAll();
+  showHint("断面クリップ中: Rキーで反転 / ✂ボタンで解除", 5000);
+}
+
+function clearClip() {
+  clipState.active = false;
+  clipState.arming = false;
+  clipState.points = [];
+  $("clipBtn").classList.remove("active");
+  hideHint();
+  for (const l of state.layers) {
+    if (l.tileset && l.tileset.clippingPlanes) l.tileset.clippingPlanes.enabled = false;
+  }
+  requestRender();
+}
+
+function applyClipAll() {
+  for (const l of state.layers) applyClipToLayer(l);
+  requestRender();
+}
+
+// 2点を通る鉛直面でタイルセットを切る（面の法線はタイルセットのローカル座標系に変換）
+function applyClipToLayer(layer) {
+  if (!layer.tileset || !clipState.active || clipState.points.length < 2) return;
+  const [a, b] = clipState.points;
+  const up = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(a, new Cesium.Cartesian3());
+  const dir = Cesium.Cartesian3.normalize(
+    Cesium.Cartesian3.subtract(b, a, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+  let normal = Cesium.Cartesian3.normalize(
+    Cesium.Cartesian3.cross(dir, up, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+  if (clipState.inverted) {
+    normal = Cesium.Cartesian3.negate(normal, new Cesium.Cartesian3());
+  }
+  const inv = Cesium.Matrix4.inverse(layer.tileset.clippingPlanesOriginMatrix, new Cesium.Matrix4());
+  const aLocal = Cesium.Matrix4.multiplyByPoint(inv, a, new Cesium.Cartesian3());
+  const nLocal = Cesium.Cartesian3.normalize(
+    Cesium.Matrix4.multiplyByPointAsVector(inv, normal, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+  const distance = -Cesium.Cartesian3.dot(nLocal, aLocal);
+  layer.tileset.clippingPlanes = new Cesium.ClippingPlaneCollection({
+    planes: [new Cesium.ClippingPlane(nLocal, distance)],
+    edgeWidth: 1.5,
+    edgeColor: Cesium.Color.fromCssColorString("#4da3ff"),
+  });
+}
+
+// 画面下部ヒントの共通制御
+let hintTimer = null;
+function showHint(text, autoHideMs) {
+  const hint = $("measureHint");
+  hint.textContent = text;
+  hint.classList.remove("hidden");
+  clearTimeout(hintTimer);
+  if (autoHideMs) hintTimer = setTimeout(hideHint, autoHideMs);
+}
+function hideHint() {
+  $("measureHint").classList.add("hidden");
+}
+
+// ============================================================
 // 歩行者視点モード
 // ============================================================
 const walkState = { active: false, arming: false, prevCamera: null };
@@ -1023,6 +1113,14 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (walkState.active || walkState.arming) exitWalk();
     else if (measureState.active) stopMeasure(false);
+    else if (clipState.arming || clipState.active) clearClip();
+    return;
+  }
+  // R: 断面クリップの反転
+  if ((e.key === "r" || e.key === "R") && clipState.active &&
+      e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA") {
+    clipState.inverted = !clipState.inverted;
+    applyClipAll();
     return;
   }
   if (!walkState.active) return;
@@ -1328,17 +1426,46 @@ $("shadowBtn").onclick = () => {
 };
 
 $("timeSlider").oninput = (e) => applyTime(parseFloat(e.target.value));
+$("dateSelect").onchange = () => applyTime(parseFloat($("timeSlider").value));
+
+// シミュレーション日付（日影規制の検討は冬至日が基準）
+const SIM_DATES = { equinox: [2, 20], summer: [5, 21], winter: [11, 22] };
 
 function applyTime(hourJst) {
   const h = Math.floor(hourJst);
   const m = Math.round((hourJst - h) * 60);
   $("timeLabel").textContent = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
   const now = new Date();
+  const sel = $("dateSelect").value;
+  const [month, day] = SIM_DATES[sel] || [now.getMonth(), now.getDate()];
   // JSTの時刻をUTCに変換して設定
-  const date = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), h - 9, m));
+  const date = new Date(Date.UTC(now.getFullYear(), month, day, h - 9, m));
   viewer.clock.currentTime = Cesium.JulianDate.fromDate(date);
   requestRender();
 }
+
+// 日影アニメーション（6時→19時を約13秒でループ再生）
+let sunAnimHandle = null;
+$("sunPlayBtn").onclick = () => {
+  if (sunAnimHandle) {
+    clearInterval(sunAnimHandle);
+    sunAnimHandle = null;
+    $("sunPlayBtn").textContent = "▶";
+    $("sunPlayBtn").classList.remove("active");
+    return;
+  }
+  if (!state.shadows) $("shadowBtn").click(); // 影が無効なら有効化
+  const start = performance.now();
+  const from = 6, to = 19;
+  $("sunPlayBtn").textContent = "⏸";
+  $("sunPlayBtn").classList.add("active");
+  sunAnimHandle = setInterval(() => {
+    const frac = ((performance.now() - start) / 13000) % 1;
+    const hour = from + frac * (to - from);
+    $("timeSlider").value = hour;
+    applyTime(hour);
+  }, 80);
+};
 
 $("screenshotBtn").onclick = () => {
   const remove = viewer.scene.postRender.addEventListener(() => {
@@ -1414,6 +1541,7 @@ async function showStats(layer) {
   let heightSum = 0, heightMax = 0, heightCount = 0;
   const bins = STATS_BINS.map(() => 0);
   const usage = new Map();
+  const rows = []; // エクスポート用に全属性を保持
 
   for (const tile of tiles) {
     const content = tile.content;
@@ -1437,11 +1565,85 @@ async function showStats(layer) {
 
       const u = featureProp(f, USAGE_PROPS) || "不明";
       usage.set(u, (usage.get(u) || 0) + 1);
+
+      const row = {};
+      for (const key of f.getPropertyIds()) {
+        const v = f.getProperty(key);
+        if (v === undefined || v === null || v === "") continue;
+        row[key] = v;
+      }
+      rows.push(row);
     }
   }
 
+  lastStats = { name: layer.dataset.name, rows };
   renderStats(layer, { count, heightSum, heightMax, heightCount, bins, usage });
 }
+
+// ---------- エクスポート ----------
+let lastStats = null;
+
+function downloadFile(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function exportTimestamp() {
+  return new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
+}
+
+$("statsCsvBtn").onclick = () => {
+  if (!lastStats || lastStats.rows.length === 0) return;
+  // 列は出現順（ネストJSONの"attributes"は除外）
+  const keys = [];
+  for (const row of lastStats.rows) {
+    for (const k of Object.keys(row)) {
+      if (k !== "attributes" && !keys.includes(k)) keys.push(k);
+    }
+  }
+  const esc = (v) => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [keys.join(",")];
+  for (const row of lastStats.rows) {
+    lines.push(keys.map((k) => (row[k] !== undefined ? esc(row[k]) : "")).join(","));
+  }
+  // BOM付きでExcelの文字化けを防ぐ
+  downloadFile("\ufeff" + lines.join("\n"), `plateau-buildings-${exportTimestamp()}.csv`, "text/csv;charset=utf-8");
+  toast(`${lastStats.rows.length}件をCSVで保存しました`);
+};
+
+$("statsGeojsonBtn").onclick = () => {
+  if (!lastStats || lastStats.rows.length === 0) return;
+  const features = lastStats.rows.map((row) => {
+    const lon = Number(row._x);
+    const lat = Number(row._y);
+    const props = { ...row };
+    // ネストJSONの属性は展開して持たせる
+    if (typeof props.attributes === "string") {
+      try { props.attributes = JSON.parse(props.attributes); } catch (e) { /* 文字列のまま */ }
+    }
+    return {
+      type: "Feature",
+      geometry: Number.isFinite(lon) && Number.isFinite(lat)
+        ? { type: "Point", coordinates: [lon, lat] }
+        : null,
+      properties: props,
+    };
+  });
+  const geojson = {
+    type: "FeatureCollection",
+    name: lastStats.name,
+    features,
+  };
+  downloadFile(JSON.stringify(geojson), `plateau-buildings-${exportTimestamp()}.geojson`, "application/geo+json");
+  toast(`${features.length}件をGeoJSONで保存しました`);
+};
 
 function renderStats(layer, s) {
   $("statsTitle").textContent = `建物統計 — ${layer.dataset.name}`;
