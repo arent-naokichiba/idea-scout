@@ -130,6 +130,53 @@ class PlateauClient:
                 return c
         return None
 
+    def list_composites(
+        self,
+        pref: str | None = None,
+        dataset_type: str | None = None,
+        refresh: bool = False,
+    ) -> list[dict]:
+        """都道府県全域の結合タイルセット一覧を返す（年度別・LOD別）
+
+        市区町村別のdatasetsと違い、過去年度（2020〜）が残っているため経年比較に使える。
+        """
+        results = []
+        for c in self.load_catalog(refresh)["composite_tilesets"]:
+            if pref and pref not in (c.get("pref") or ""):
+                continue
+            if dataset_type and dataset_type not in (c.get("type") or "") and dataset_type != (c.get("type_en") or ""):
+                continue
+            results.append(self._enrich_composite(c))
+        return results
+
+    def get_composite(self, composite_id: str, refresh: bool = False) -> dict | None:
+        """IDで結合タイルセットを1件取得する"""
+        for c in self.load_catalog(refresh)["composite_tilesets"]:
+            if c["id"] == composite_id:
+                return self._enrich_composite(c)
+        return None
+
+    @staticmethod
+    def _enrich_composite(c: dict) -> dict:
+        """結合タイルセットをdatasetsと同じ形で扱えるように表示名等を補完する"""
+        tex = ""
+        if c.get("texture") is True:
+            tex = "・テクスチャ"
+        elif c.get("texture") is False:
+            tex = "・テクスチャなし"
+        year = c.get("year")
+        year_label = "最新" if year == "latest" else f"{year}年度"
+        d = dict(c)
+        d.update({
+            "name": f"{c['type']} LOD{c['lod']}{tex}（{c['pref']}全域・{year_label}）",
+            "format": "3D Tiles",
+            "city": None,
+            "ward": None,
+            "file_size": None,
+            "composite": True,
+        })
+        return d
+
     def list_types(self, refresh: bool = False) -> list[tuple[str, str, int]]:
         """データセット種別の一覧を (種別名, 種別コード, 件数) で返す"""
         counts: dict[tuple[str, str], int] = {}

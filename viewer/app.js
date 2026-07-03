@@ -36,6 +36,9 @@ const BASEMAPS = {
   std:   { url: "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png", min: 0, max: 18, credit: "地理院タイル（標準地図）" },
   pale:  { url: "https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png", min: 2, max: 18, rect: JAPAN_RECT, credit: "地理院タイル（淡色地図）" },
   dark:  { url: "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", min: 0, max: 19, credit: "© OpenStreetMap contributors © CARTO" },
+  // 年代別空中写真（提供ズームより浅い範囲は表示されない）
+  hist1970s: { url: "https://cyberjapandata.gsi.go.jp/xyz/ort_old10/{z}/{x}/{y}.png", min: 5, max: 17, rect: JAPAN_RECT, credit: "地理院タイル（1974〜1978年 空中写真）", note: "1974〜78年写真は国土の約9割をカバーしています" },
+  hist1960s: { url: "https://cyberjapandata.gsi.go.jp/xyz/gazo1/{z}/{x}/{y}.jpg", min: 5, max: 17, rect: JAPAN_RECT, credit: "地理院タイル（1961〜1969年 空中写真）", note: "1961〜69年写真は都市部のみ・ズーム10以上で表示されます" },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -335,6 +338,7 @@ document.addEventListener("drop", (e) => {
 });
 
 async function addDatasetById(id, options = {}) {
+  if (HAZARD_OVERLAYS[id]) return addHazardLayer(id, options);
   try {
     const dataset = await api("dataset", { id });
     return addDataset(dataset, options);
@@ -343,6 +347,58 @@ async function addDatasetById(id, options = {}) {
     return null;
   }
 }
+
+// ============================================================
+// 全国ハザードマップ（重ねるハザードマップ）オーバーレイ
+// ============================================================
+const HAZARD_OVERLAYS = {
+  "hazard-flood":     { name: "洪水浸水想定区域（想定最大規模）", layer: "01_flood_l2_shinsuishin_data" },
+  "hazard-hightide":  { name: "高潮浸水想定区域", layer: "03_hightide_l2_shinsuishin_data" },
+  "hazard-tsunami":   { name: "津波浸水想定", layer: "04_tsunami_newlegend_data" },
+  "hazard-doseki":    { name: "土砂災害警戒区域（土石流）", layer: "05_dosekiryukeikaikuiki" },
+  "hazard-kyukeisha": { name: "土砂災害警戒区域（急傾斜地）", layer: "05_kyukeishakeikaikuiki" },
+  "hazard-jisuberi":  { name: "土砂災害警戒区域（地すべり）", layer: "05_jisuberikeikaikuiki" },
+};
+
+function addHazardLayer(id, options = {}) {
+  const def = HAZARD_OVERLAYS[id];
+  if (!def) return null;
+  if (state.layers.some((l) => l.id === id)) {
+    toast("すでに追加されています: " + def.name);
+    return state.layers.find((l) => l.id === id);
+  }
+  const provider = new Cesium.UrlTemplateImageryProvider({
+    url: `https://disaportaldata.gsi.go.jp/raster/${def.layer}/{z}/{x}/{y}.png`,
+    minimumLevel: 2,
+    maximumLevel: 17,
+    rectangle: Cesium.Rectangle.fromDegrees(...JAPAN_RECT),
+    credit: new Cesium.Credit("ハザードマップポータルサイト（重ねるハザードマップ）"),
+  });
+  const layer = {
+    id,
+    dataset: { name: `⚠ ${def.name}（全国）`, format: "ラスタタイル", type: "重ねるハザードマップ", type_en: "hazard" },
+    kind: "hazard",
+    imageryLayer: new Cesium.ImageryLayer(provider, {
+      alpha: options.opacity != null ? options.opacity : 0.7,
+      show: options.visible !== false,
+    }),
+    visible: options.visible !== false,
+    opacity: options.opacity != null ? options.opacity : 0.7,
+    loading: false,
+  };
+  viewer.imageryLayers.add(layer.imageryLayer);
+  applySplit(layer);
+  state.layers.push(layer);
+  renderLayerList();
+  saveState();
+  requestRender();
+  toast("追加しました: " + def.name + "（区域がない場所には何も表示されません）");
+  return layer;
+}
+
+document.querySelectorAll(".hz").forEach((btn) => {
+  btn.onclick = () => addHazardLayer(btn.dataset.id);
+});
 
 function removeLayer(layer) {
   if (layer.tileset) viewer.scene.primitives.remove(layer.tileset);
@@ -445,6 +501,7 @@ function renderLayerList() {
       if (layer.tileset) viewer.flyTo(layer.tileset, { duration: 1.2 });
       else if (layer.dataSource) viewer.flyTo(layer.dataSource, { duration: 1.2 });
       else if (layer.kind === "mvt") flyToMvtHome(layer);
+      else if (layer.kind === "hazard") flyToJapan();
     });
     const infoBtn = iconBtn("ℹ️", "詳細", () => showDetail(layer.dataset));
     const delBtn = iconBtn("🗑", "削除", () => removeLayer(layer));
@@ -494,7 +551,7 @@ function renderLayerList() {
     }
 
     // 色分けスタイル（3D Tilesのみ）
-    if (layer.kind !== "mvt") {
+    if (layer.kind === "tiles") {
       const styleRow = document.createElement("div");
       styleRow.className = "layer-row";
       const styleSel = document.createElement("select");
@@ -527,7 +584,7 @@ function renderLayerList() {
     opSlider.value = layer.opacity;
     opSlider.oninput = () => {
       layer.opacity = parseFloat(opSlider.value);
-      if (layer.kind === "mvt") {
+      if (layer.imageryLayer) {
         layer.imageryLayer.alpha = layer.opacity;
         requestRender();
       } else {
@@ -616,6 +673,23 @@ async function doSearch() {
   status.textContent = "検索中...";
   $("searchResults").innerHTML = "";
   try {
+    if ($("searchScope").value === "composite") {
+      // 都道府県全域の結合タイルセット（年度別）
+      const results = await api("composites", {
+        pref: $("searchPref").value,
+        type: $("searchType").value,
+      });
+      // 種別 → LOD → 年度（新しい順）で並べる
+      results.sort((a, b) =>
+        (a.type_en || "").localeCompare(b.type_en || "") ||
+        (a.lod || 0) - (b.lod || 0) ||
+        String(b.year).localeCompare(String(a.year)));
+      status.textContent = results.length === 0
+        ? "該当するデータがありません。都道府県を選択してください。"
+        : `${results.length}件（同じ種別の年度違いを追加して「⇔ 比較」で経年比較できます）`;
+      renderSearchResults(results);
+      return;
+    }
     const results = await api("datasets", {
       q: $("searchQuery").value.trim(),
       pref: $("searchPref").value,
@@ -649,7 +723,10 @@ function renderSearchResults(results) {
     chip.className = "chip" + (d.format === "MVT" ? " mvt" : "");
     chip.textContent = d.format + (d.lod != null ? ` LOD${d.lod}` : "");
     meta.appendChild(chip);
-    meta.append(` ${d.pref} ${d.ward || d.city || ""} / ${d.year}年度 / ${formatSize(d.file_size)}`);
+    const place = [d.pref, d.ward || d.city].filter(Boolean).join(" ");
+    const yearLabel = d.year === "latest" ? "最新" : `${d.year}年度`;
+    const size = d.file_size ? ` / ${formatSize(d.file_size)}` : "";
+    meta.append(` ${place} / ${yearLabel}${size}`);
 
     const actions = document.createElement("div");
     actions.className = "result-actions";
@@ -1518,6 +1595,7 @@ function parseHashState() {
 $("basemapSelect").onchange = (e) => {
   state.basemap = e.target.value;
   switchBasemap(state.basemap);
+  if (BASEMAPS[state.basemap].note) toast(BASEMAPS[state.basemap].note, 4000);
   saveState();
 };
 

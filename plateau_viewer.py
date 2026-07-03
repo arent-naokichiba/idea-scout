@@ -74,8 +74,13 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self._send_json(result)
 
         elif path == "/api/dataset":
-            d = self.plateau.get_dataset(q.get("id", ""))
+            ds_id = q.get("id", "")
+            d = self.plateau.get_dataset(ds_id) or self.plateau.get_composite(ds_id)
             self._send_json(d or {"error": "not found"}, status=200 if d else 404)
+
+        elif path == "/api/composites":
+            self._send_json(self.plateau.list_composites(
+                pref=q.get("pref"), dataset_type=q.get("type")))
 
         elif path == "/api/citygml":
             c = self.plateau.get_citygml(q.get("code", ""))
