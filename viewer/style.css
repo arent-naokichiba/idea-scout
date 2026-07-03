@@ -1,0 +1,233 @@
+/* PLATEAU Viewer スタイル（ダークテーマ） */
+
+:root {
+  --bg: #1b1e24;
+  --bg2: #23272f;
+  --bg3: #2c313a;
+  --fg: #e6e8ec;
+  --muted: #9aa1ac;
+  --accent: #4da3ff;
+  --accent2: #2f7fd6;
+  --border: #3a4048;
+  --danger: #e05656;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  font-family: "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  font-size: 13px;
+  background: var(--bg); color: var(--fg);
+  overflow: hidden;
+}
+
+body { display: flex; flex-direction: column; }
+
+.hidden { display: none !important; }
+.muted { color: var(--muted); font-size: 12px; }
+.center { text-align: center; padding: 24px 8px; line-height: 1.8; }
+.grow { flex: 1; }
+
+/* ---------- ヘッダー ---------- */
+#topbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px;
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  z-index: 30; flex-wrap: wrap;
+}
+.brand { font-size: 16px; font-weight: 700; letter-spacing: .5px; }
+.brand span { color: var(--accent); font-weight: 400; }
+
+.geocode-box { position: relative; }
+.geocode-box input {
+  width: 240px; padding: 5px 10px;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--fg);
+}
+.dropdown {
+  position: absolute; top: 30px; left: 0; right: 0; max-height: 260px; overflow-y: auto;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+  z-index: 100; box-shadow: 0 6px 18px rgba(0,0,0,.5);
+}
+.dropdown div { padding: 6px 10px; cursor: pointer; }
+.dropdown div:hover { background: var(--accent2); }
+
+.topbar-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ctrl { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+.ctrl input[type=range] { width: 90px; accent-color: var(--accent); }
+
+.tbtn {
+  padding: 4px 9px; background: var(--bg3); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.tbtn:hover { background: #363c46; }
+.tbtn.active { background: var(--accent2); border-color: var(--accent); }
+
+select, input[type=text] {
+  background: var(--bg3); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+}
+
+/* ---------- レイアウト ---------- */
+#main { flex: 1; display: flex; min-height: 0; position: relative; }
+
+#sidebar {
+  width: 320px; min-width: 320px;
+  background: var(--bg2); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+}
+
+.tabs { display: flex; border-bottom: 1px solid var(--border); }
+.tab {
+  flex: 1; padding: 9px 4px; background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent;
+}
+.tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+.badge {
+  background: var(--accent); color: #fff; border-radius: 9px;
+  padding: 0 6px; font-size: 11px;
+}
+
+.tab-body { flex: 1; overflow-y: auto; padding: 10px; }
+
+/* ---------- 検索 ---------- */
+.quickstart { margin-bottom: 12px; }
+.qs-title { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+.qs-buttons { display: flex; gap: 5px; flex-wrap: wrap; }
+.qs {
+  padding: 4px 10px; background: var(--bg3); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 12px; cursor: pointer;
+}
+.qs:hover { border-color: var(--accent); color: var(--accent); }
+
+#searchForm { display: flex; flex-direction: column; gap: 7px; margin-bottom: 10px; }
+#searchForm .row { display: flex; gap: 6px; }
+#searchForm .row > * { flex: 1; min-width: 0; }
+.chk { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+
+button.primary {
+  padding: 7px; background: var(--accent2); color: #fff;
+  border: none; border-radius: 6px; cursor: pointer; font-size: 13px;
+}
+button.primary:hover { background: var(--accent); }
+
+.result-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.result-list li {
+  padding: 8px; margin-bottom: 6px;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+}
+.result-name { font-weight: 600; line-height: 1.4; margin-bottom: 4px; }
+.result-meta { color: var(--muted); font-size: 11px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.chip {
+  padding: 1px 7px; border-radius: 9px; font-size: 10px;
+  background: #2b4c6f; color: #bcd8f5;
+}
+.chip.mvt { background: #5a4a2b; color: #e8d5a8; }
+.result-actions { display: flex; gap: 5px; margin-top: 6px; }
+
+/* ---------- レイヤー ---------- */
+.layer-list { list-style: none; margin: 0; padding: 0; }
+.layer-list li {
+  padding: 9px; margin-bottom: 8px;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+}
+.layer-head { display: flex; align-items: center; gap: 6px; }
+.layer-name { flex: 1; font-weight: 600; line-height: 1.35; font-size: 12px; }
+.layer-loading { color: var(--accent); font-size: 11px; margin-top: 4px; }
+.layer-row {
+  display: flex; align-items: center; gap: 6px; margin-top: 7px;
+  color: var(--muted); font-size: 11px;
+}
+.layer-row select { flex: 1; padding: 3px 6px; font-size: 11px; }
+.layer-row input[type=range] { flex: 1; accent-color: var(--accent); }
+.layer-row input[type=number] {
+  width: 58px; padding: 3px 5px;
+  background: var(--bg2); color: var(--fg); border: 1px solid var(--border); border-radius: 4px;
+}
+.icon-btn {
+  background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 14px; padding: 2px 4px;
+}
+.icon-btn:hover { color: var(--fg); }
+.icon-btn.danger:hover { color: var(--danger); }
+
+/* ---------- 3Dビュー ---------- */
+#cesiumContainer { flex: 1; position: relative; min-width: 0; }
+#cesiumContainer .cesium-viewer { position: absolute; inset: 0; }
+
+#loadingOverlay {
+  position: absolute; inset: 0; z-index: 20;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: var(--bg); color: var(--muted);
+}
+.spinner {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 3px solid var(--border); border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#tileProgress {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 15; padding: 5px 14px; border-radius: 14px;
+  background: rgba(20, 24, 30, .85); color: var(--accent); font-size: 12px;
+}
+#measureHint {
+  position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 15; padding: 5px 14px; border-radius: 14px;
+  background: rgba(20, 24, 30, .85); color: #ffd166; font-size: 12px;
+}
+
+/* ---------- 属性パネル ---------- */
+#attrPanel {
+  width: 340px; min-width: 340px;
+  background: var(--bg2); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 10px; border-bottom: 1px solid var(--border); font-weight: 600;
+}
+#attrFilter { margin: 8px 10px 0; }
+#attrBody { flex: 1; overflow-y: auto; padding: 8px 10px; }
+.attr-row { padding: 5px 0; border-bottom: 1px solid var(--border); }
+.attr-key { color: var(--muted); font-size: 11px; word-break: break-all; }
+.attr-val { word-break: break-all; line-height: 1.4; }
+
+/* ---------- ステータスバー ---------- */
+#statusbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 3px 12px; font-size: 11px; color: var(--muted);
+  background: var(--bg2); border-top: 1px solid var(--border);
+}
+.credit { font-size: 10px; }
+
+/* ---------- ダイアログ・トースト ---------- */
+dialog {
+  background: var(--bg2); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 0; width: 560px; max-width: 92vw;
+}
+dialog::backdrop { background: rgba(0,0,0,.55); }
+#detailTable { width: 100%; border-collapse: collapse; margin: 4px 0; }
+#detailTable td { padding: 5px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+#detailTable td:first-child { color: var(--muted); white-space: nowrap; }
+#detailTable td:last-child { word-break: break-all; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; }
+
+#toast {
+  position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+  z-index: 200; padding: 8px 18px; border-radius: 18px;
+  background: rgba(20, 24, 30, .92); color: var(--fg);
+  border: 1px solid var(--border); font-size: 13px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.5);
+}
+
+/* Cesiumのクレジット表記を小さく */
+.cesium-viewer-bottom { font-size: 10px; }
+
+/* スクロールバー */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }

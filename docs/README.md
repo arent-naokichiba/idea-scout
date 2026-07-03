@@ -51,7 +51,10 @@ python main.py --full
 
 ## 付属ツール
 
-- **PLATEAU CLI** (`plateau_cli.py`) — 国土交通省 Project PLATEAU の3D都市モデルを検索・ダウンロードするツール。詳細は [docs/PLATEAU.md](PLATEAU.md) を参照。
+- **PLATEAU Viewer** (`plateau_viewer.py`) — 国土交通省 Project PLATEAU の3D都市モデルをブラウザで高速3D表示するビューア（Windows / Mac / Linux対応、検索・属性参照・計測・日照シミュレーション等）。
+- **PLATEAU CLI** (`plateau_cli.py`) — 3D都市モデルの検索・ダウンロードを行うコマンドラインツール。
+
+詳細は [docs/PLATEAU.md](PLATEAU.md) を参照。
 
 ## アーキテクチャ
 

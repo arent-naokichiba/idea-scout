@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLATEAU Viewer</title>
+<script>window.CESIUM_BASE_URL = "https://cdn.jsdelivr.net/npm/cesium@1.124.0/Build/Cesium/";</script>
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.124.0/Build/Cesium/Cesium.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.124.0/Build/Cesium/Widgets/widgets.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ヘッダー -->
+<header id="topbar">
+  <div class="brand">PLATEAU <span>Viewer</span></div>
+
+  <div class="geocode-box">
+    <input id="geocodeInput" type="text" placeholder="住所・地名で移動（例: 東京駅）" autocomplete="off">
+    <div id="geocodeResults" class="dropdown hidden"></div>
+  </div>
+
+  <div class="topbar-controls">
+    <label class="ctrl" title="ベースマップ">
+      🗺
+      <select id="basemapSelect">
+        <option value="photo">航空写真</option>
+        <option value="std">標準地図</option>
+        <option value="pale">淡色地図</option>
+        <option value="dark">ダーク</option>
+      </select>
+    </label>
+    <label class="ctrl" title="描画品質（左: 高品質 / 右: 高速）">
+      品質 <input id="sseSlider" type="range" min="2" max="48" step="1" value="16">
+    </label>
+    <button id="shadowBtn" class="tbtn" title="影のON/OFF">影</button>
+    <label class="ctrl hidden" id="timeCtrl" title="時刻（日照シミュレーション）">
+      🕒 <input id="timeSlider" type="range" min="5" max="20" step="0.25" value="12">
+      <span id="timeLabel">12:00</span>
+    </label>
+    <button id="measureBtn" class="tbtn" title="距離計測（クリックで測点追加 / ダブルクリックで終了）">📏 計測</button>
+    <button id="screenshotBtn" class="tbtn" title="スクリーンショットを保存">📷</button>
+    <button id="shareBtn" class="tbtn" title="現在の表示状態のURLをコピー">🔗 共有</button>
+    <button id="fpsBtn" class="tbtn" title="FPS表示">FPS</button>
+    <button id="homeBtn" class="tbtn" title="日本全体表示">🏠</button>
+  </div>
+</header>
+
+<div id="main">
+
+  <!-- 左サイドバー -->
+  <aside id="sidebar">
+    <nav class="tabs">
+      <button class="tab active" data-tab="search">検索</button>
+      <button class="tab" data-tab="layers">レイヤー <span id="layerCount" class="badge hidden">0</span></button>
+      <button class="tab" data-tab="bookmarks">ブックマーク</button>
+    </nav>
+
+    <!-- 検索タブ -->
+    <section id="tab-search" class="tab-body">
+      <div class="quickstart" id="quickstart">
+        <div class="qs-title">クイックスタート</div>
+        <div class="qs-buttons">
+          <button class="qs" data-city="千代田区" data-label="東京・千代田区">東京</button>
+          <button class="qs" data-city="大阪市" data-label="大阪市">大阪</button>
+          <button class="qs" data-city="名古屋市" data-label="名古屋市">名古屋</button>
+          <button class="qs" data-city="札幌市" data-label="札幌市">札幌</button>
+          <button class="qs" data-city="福岡市" data-label="福岡市">福岡</button>
+        </div>
+      </div>
+
+      <form id="searchForm">
+        <input id="searchQuery" type="text" placeholder="キーワード（データセット名）">
+        <div class="row">
+          <select id="searchPref"><option value="">都道府県</option></select>
+          <input id="searchCity" type="text" placeholder="市区町村">
+        </div>
+        <div class="row">
+          <select id="searchType"><option value="">種別（すべて）</option></select>
+          <label class="chk"><input id="search3dOnly" type="checkbox" checked> 3D Tilesのみ</label>
+        </div>
+        <button type="submit" class="primary">検索</button>
+      </form>
+
+      <div id="searchStatus" class="muted"></div>
+      <ul id="searchResults" class="result-list"></ul>
+    </section>
+
+    <!-- レイヤータブ -->
+    <section id="tab-layers" class="tab-body hidden">
+      <div id="layerEmpty" class="muted center">
+        レイヤーがありません。<br>「検索」タブからデータセットを追加してください。
+      </div>
+      <ul id="layerList" class="layer-list"></ul>
+    </section>
+
+    <!-- ブックマークタブ -->
+    <section id="tab-bookmarks" class="tab-body hidden">
+      <button id="addBookmarkBtn" class="primary">現在の視点を保存</button>
+      <ul id="bookmarkList" class="result-list"></ul>
+      <div id="bookmarkEmpty" class="muted center">保存された視点はありません。</div>
+    </section>
+  </aside>
+
+  <!-- 3Dビュー -->
+  <div id="cesiumContainer">
+    <div id="loadingOverlay"><div class="spinner"></div><div>読み込み中...</div></div>
+    <div id="tileProgress" class="hidden">タイル読み込み中 <span id="tileProgressCount"></span></div>
+    <div id="measureHint" class="hidden">クリックで測点を追加 / ダブルクリックで終了 / Escで中止</div>
+  </div>
+
+  <!-- 右: 属性パネル -->
+  <aside id="attrPanel" class="hidden">
+    <div class="panel-head">
+      <span>地物の属性</span>
+      <div>
+        <button id="attrCopyBtn" class="tbtn" title="JSONとしてコピー">コピー</button>
+        <button id="attrCloseBtn" class="tbtn">✕</button>
+      </div>
+    </div>
+    <input id="attrFilter" type="text" placeholder="属性名で絞り込み">
+    <div id="attrBody"></div>
+  </aside>
+</div>
+
+<!-- ステータスバー -->
+<footer id="statusbar">
+  <span id="cameraStatus"></span>
+  <span class="grow"></span>
+  <span id="statusMsg"></span>
+  <span class="credit">出典: 国土交通省 Project PLATEAU / 地理院タイル</span>
+</footer>
+
+<!-- データセット詳細ダイアログ -->
+<dialog id="detailDialog">
+  <div class="panel-head"><span id="detailTitle"></span><button id="detailCloseBtn" class="tbtn">✕</button></div>
+  <table id="detailTable"></table>
+  <div class="dialog-actions">
+    <button id="detailCopyUrlBtn" class="tbtn">URLをコピー</button>
+    <button id="detailAddBtn" class="primary">マップに追加</button>
+  </div>
+</dialog>
+
+<div id="toast" class="hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
