@@ -270,6 +270,70 @@ function flyToMvtHome(layer) {
   });
 }
 
+// GeoJSONファイル（敷地境界・計画データ等）をエンティティレイヤーとして追加する
+const GEOJSON_PALETTE = ["#4da3ff", "#e6a05f", "#7dc97d", "#d98cc2", "#c2b25f", "#6fc9c2"];
+let geojsonCounter = 0;
+
+async function addGeojsonLayer(name, geojson) {
+  try {
+    const color = Cesium.Color.fromCssColorString(
+      GEOJSON_PALETTE[geojsonCounter++ % GEOJSON_PALETTE.length]);
+    const dataSource = await Cesium.GeoJsonDataSource.load(geojson, {
+      clampToGround: true, // 地表・建物表面にドレープ
+      stroke: color,
+      strokeWidth: 3,
+      fill: color.withAlpha(0.45),
+      markerColor: color,
+    });
+    viewer.dataSources.add(dataSource);
+    const layer = {
+      id: `geojson-${geojsonCounter}-${name}`,
+      dataset: { name: `📁 ${name}`, format: "GeoJSON", type: "インポート", type_en: "import" },
+      kind: "geojson",
+      dataSource,
+      visible: true,
+      loading: false,
+    };
+    state.layers.push(layer);
+    renderLayerList();
+    viewer.flyTo(dataSource, { duration: 1.5 });
+    toast(`読み込みました: ${name}（${dataSource.entities.values.length}地物）`);
+    requestRender();
+    return layer;
+  } catch (e) {
+    console.error(e);
+    toast(`GeoJSONの読み込みに失敗しました: ${name}`);
+    return null;
+  }
+}
+
+function importGeojsonFiles(files) {
+  for (const file of files) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        addGeojsonLayer(file.name.replace(/\.(geo)?json$/i, ""), JSON.parse(reader.result));
+      } catch (e) {
+        toast(`JSONとして解釈できません: ${file.name}`);
+      }
+    };
+    reader.readAsText(file);
+  }
+}
+
+$("importBtn").onclick = () => $("importFile").click();
+$("importFile").onchange = (e) => {
+  importGeojsonFiles(e.target.files);
+  e.target.value = "";
+};
+
+// マップへのドラッグ&ドロップ
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  if (e.dataTransfer?.files?.length) importGeojsonFiles(e.dataTransfer.files);
+});
+
 async function addDatasetById(id, options = {}) {
   try {
     const dataset = await api("dataset", { id });
@@ -283,6 +347,7 @@ async function addDatasetById(id, options = {}) {
 function removeLayer(layer) {
   if (layer.tileset) viewer.scene.primitives.remove(layer.tileset);
   if (layer.imageryLayer) viewer.imageryLayers.remove(layer.imageryLayer);
+  if (layer.dataSource) viewer.dataSources.remove(layer.dataSource, true);
   state.layers = state.layers.filter((l) => l !== layer);
   clearSelection();
   renderLayerList();
@@ -365,6 +430,7 @@ function renderLayerList() {
       layer.visible = !layer.visible;
       if (layer.tileset) layer.tileset.show = layer.visible;
       if (layer.imageryLayer) layer.imageryLayer.show = layer.visible;
+      if (layer.dataSource) layer.dataSource.show = layer.visible;
       renderLayerList();
       saveState();
       requestRender();
@@ -377,6 +443,7 @@ function renderLayerList() {
 
     const zoomBtn = iconBtn("🎯", "このレイヤーに移動", () => {
       if (layer.tileset) viewer.flyTo(layer.tileset, { duration: 1.2 });
+      else if (layer.dataSource) viewer.flyTo(layer.dataSource, { duration: 1.2 });
       else if (layer.kind === "mvt") flyToMvtHome(layer);
     });
     const infoBtn = iconBtn("ℹ️", "詳細", () => showDetail(layer.dataset));
@@ -419,6 +486,11 @@ function renderLayerList() {
       li.appendChild(loading);
       list.appendChild(li);
       continue;
+    }
+
+    if (layer.kind === "geojson") {
+      list.appendChild(li);
+      continue; // GeoJSONはスタイル・透明度コントロールなし
     }
 
     // 色分けスタイル（3D Tilesのみ）
@@ -748,6 +820,10 @@ pickHandler.setInputAction((movement) => {
     clipAddPoint(movement.position);
     return;
   }
+  if (sightState.arming) {
+    sightAddPoint(movement.position);
+    return;
+  }
   const picked = viewer.scene.pick(movement.position);
   clearSelection();
   if (picked instanceof Cesium.Cesium3DTileFeature) {
@@ -755,6 +831,13 @@ pickHandler.setInputAction((movement) => {
     selectedOriginalColor = Cesium.Color.clone(picked.color);
     picked.color = Cesium.Color.fromCssColorString("#ffd166");
     showAttributes(picked);
+    requestRender();
+    return;
+  }
+  // GeoJSONインポートのエンティティ
+  if (picked && picked.id instanceof Cesium.Entity && picked.id.properties) {
+    const props = picked.id.properties.getValue(viewer.clock.currentTime) || {};
+    showRawAttributes(props, picked.id.name || "GeoJSON地物");
     requestRender();
     return;
   }
@@ -803,9 +886,11 @@ function renderAttributes() {
   for (const [key, rawValue] of Object.entries(currentAttrs)) {
     if (filter && !key.toLowerCase().includes(filter)) continue;
     let value = rawValue;
-    // ネストされた属性（JSON文字列）は整形して表示
+    // ネストされた属性（JSON文字列・オブジェクト）は整形して表示
     if (typeof value === "string" && (value.startsWith("{") || value.startsWith("["))) {
       try { value = JSON.stringify(JSON.parse(value), null, 1); } catch (e) { /* 文字列のまま */ }
+    } else if (value !== null && typeof value === "object") {
+      try { value = JSON.stringify(value, null, 1); } catch (e) { value = String(value); }
     }
     const row = document.createElement("div");
     row.className = "attr-row";
@@ -1046,6 +1131,99 @@ function applyClipToLayer(layer) {
   });
 }
 
+// ============================================================
+// 視線・見通し解析
+// ============================================================
+const SIGHT_EYE_HEIGHT = 1.5; // 視点・対象とも地表からの高さ[m]
+const sightState = { arming: false, points: [], entities: [] };
+
+$("sightBtn").onclick = () => {
+  if (sightState.arming || sightState.entities.length > 0) {
+    clearSight();
+    return;
+  }
+  sightState.arming = true;
+  sightState.points = [];
+  $("sightBtn").classList.add("active");
+  showHint("視点の位置をクリックしてください（Escで中止）");
+};
+
+function clearSight() {
+  sightState.arming = false;
+  sightState.points = [];
+  for (const e of sightState.entities) viewer.entities.remove(e);
+  sightState.entities = [];
+  $("sightBtn").classList.remove("active");
+  hideHint();
+  requestRender();
+}
+
+function sightAddPoint(windowPos) {
+  const pos = pickPosition(windowPos);
+  if (!Cesium.defined(pos)) return;
+  sightState.points.push(pos);
+  if (sightState.points.length === 1) {
+    showHint("見通したい対象をクリックしてください");
+    return;
+  }
+  sightState.arming = false;
+  runSightAnalysis();
+}
+
+function liftPosition(pos, height) {
+  const up = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(pos, new Cesium.Cartesian3());
+  return Cesium.Cartesian3.add(
+    pos, Cesium.Cartesian3.multiplyByScalar(up, height, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+}
+
+function runSightAnalysis() {
+  const eye = liftPosition(sightState.points[0], SIGHT_EYE_HEIGHT);
+  const target = liftPosition(sightState.points[1], SIGHT_EYE_HEIGHT);
+  const total = Cesium.Cartesian3.distance(eye, target);
+  const dir = Cesium.Cartesian3.normalize(
+    Cesium.Cartesian3.subtract(target, eye, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+
+  // レイと3Dモデルの最初の交点を求める（自前の計測・視線エンティティは除外）
+  let hit = null;
+  try {
+    hit = viewer.scene.pickFromRay(new Cesium.Ray(eye, dir), viewer.entities.values);
+  } catch (e) { /* レイピック非対応環境 */ }
+
+  const hitDist = hit && hit.position ? Cesium.Cartesian3.distance(eye, hit.position) : Infinity;
+  const blocked = hitDist < total - 1.0; // 対象自身への命中は「見通し可」扱い
+
+  const green = Cesium.Color.fromCssColorString("#5fd08a");
+  const red = Cesium.Color.fromCssColorString("#e05656");
+  const addLine = (a, b, color) => sightState.entities.push(viewer.entities.add({
+    polyline: { positions: [a, b], width: 3, material: color, depthFailMaterial: color.withAlpha(0.3) },
+  }));
+  const addPoint = (p, color) => sightState.entities.push(viewer.entities.add({
+    position: p,
+    point: { pixelSize: 9, color, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+  }));
+
+  addPoint(eye, Cesium.Color.fromCssColorString("#4da3ff"));
+  if (blocked) {
+    addLine(eye, hit.position, green);
+    addLine(hit.position, target, red);
+    addPoint(hit.position, red);
+    sightState.entities.push(viewer.entities.add({
+      position: hit.position,
+      label: measureLabel(`遮蔽（視点から ${hitDist.toFixed(0)}m 地点）`),
+    }));
+    showHint(`見通し不可: ${hitDist.toFixed(0)}m地点で遮蔽（全長 ${total.toFixed(0)}m）/ 👁ボタンでクリア`, 8000);
+  } else {
+    addLine(eye, target, green);
+    addPoint(target, green);
+    sightState.entities.push(viewer.entities.add({
+      position: target,
+      label: measureLabel(`見通し可（${total.toFixed(0)}m）`),
+    }));
+    showHint(`見通し可: ${total.toFixed(0)}m / 👁ボタンでクリア`, 8000);
+  }
+  requestRender();
+}
+
 // 画面下部ヒントの共通制御
 let hintTimer = null;
 function showHint(text, autoHideMs) {
@@ -1113,6 +1291,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (walkState.active || walkState.arming) exitWalk();
     else if (measureState.active) stopMeasure(false);
+    else if (sightState.arming || sightState.entities.length > 0) clearSight();
     else if (clipState.arming || clipState.active) clearClip();
     return;
   }
@@ -1265,7 +1444,8 @@ $("addBookmarkBtn").onclick = () => {
 function serializeState() {
   return {
     camera: getCameraState(),
-    layers: state.layers.map((l) => ({
+    // GeoJSONインポートはファイル由来のため保存対象外
+    layers: state.layers.filter((l) => l.kind !== "geojson").map((l) => ({
       id: l.id,
       visible: l.visible,
       style: l.style,
@@ -1528,7 +1708,13 @@ function featureProp(feature, names) {
 async function showStats(layer) {
   if (!layer.tileset) return;
   toast("表示中の建物を集計しています...");
+  const s = await collectStats(layer);
+  lastStats = { name: layer.dataset.name, rows: s.rows };
+  renderStats(layer, s);
+}
 
+// 現在のビューに読み込まれている建物を集計して統計とエクスポート用の行データを返す
+async function collectStats(layer) {
   // 次の描画フレームで可視タイルを収集する
   const tiles = new Set();
   const collect = (tile) => tiles.add(tile);
@@ -1576,8 +1762,7 @@ async function showStats(layer) {
     }
   }
 
-  lastStats = { name: layer.dataset.name, rows };
-  renderStats(layer, { count, heightSum, heightMax, heightCount, bins, usage });
+  return { count, heightSum, heightMax, heightCount, bins, usage, rows };
 }
 
 // ---------- エクスポート ----------
@@ -1739,6 +1924,118 @@ function statsSection(title, rows, total) {
 }
 
 $("statsCloseBtn").onclick = () => $("statsDialog").close();
+
+// ============================================================
+// HTMLレポート生成
+// ============================================================
+$("reportBtn").onclick = async () => {
+  toast("レポートを生成しています...");
+  try {
+    const image = await captureCanvas();
+    const bldgLayer = state.layers.find(
+      (l) => l.kind === "tiles" && l.dataset.type_en === "bldg" && l.tileset && l.visible);
+    const stats = bldgLayer ? await collectStats(bldgLayer) : null;
+    const html = buildReportHtml(image, bldgLayer, stats);
+    downloadFile(html, `plateau-report-${exportTimestamp()}.html`, "text/html;charset=utf-8");
+    toast("レポートを保存しました");
+  } catch (e) {
+    console.error(e);
+    toast("レポート生成に失敗しました");
+  }
+};
+
+function captureCanvas() {
+  return new Promise((resolve) => {
+    const remove = viewer.scene.postRender.addEventListener(() => {
+      remove();
+      resolve(viewer.canvas.toDataURL("image/png"));
+    });
+    viewer.scene.requestRender();
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function reportBars(rows, total) {
+  const maxCount = Math.max(1, ...rows.map((r) => r.count));
+  return rows.map((r) => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+      <div style="width:150px;text-align:right;font-size:12px;color:#333;
+                  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.label)}</div>
+      <div style="flex:1;height:13px;">
+        <div style="width:${(r.count / maxCount) * 100}%;height:100%;background:${r.color};
+                    border-radius:2px 4px 4px 2px;min-width:2px;"></div>
+      </div>
+      <div style="width:120px;font-size:12px;color:#666;">${r.count.toLocaleString()} (${((r.count / total) * 100).toFixed(1)}%)</div>
+    </div>`).join("");
+}
+
+function buildReportHtml(image, bldgLayer, stats) {
+  const now = new Date();
+  const cam = getCameraState();
+  const layerRows = state.layers.map((l) => `
+    <tr>
+      <td>${escapeHtml(l.dataset.name)}</td>
+      <td>${escapeHtml(l.dataset.format || "-")}</td>
+      <td>${escapeHtml(l.dataset.year || "-")}</td>
+      <td>${l.visible ? "表示" : "非表示"}</td>
+    </tr>`).join("");
+
+  let statsHtml = "";
+  if (stats && stats.count > 0) {
+    const avg = stats.heightCount > 0 ? (stats.heightSum / stats.heightCount).toFixed(1) + " m" : "-";
+    const usageSorted = [...stats.usage.entries()].sort((a, b) => b[1] - a[1]);
+    const usageTop = usageSorted.slice(0, 8).map(([label, count]) => ({ label, count, color: "#3c78c8" }));
+    const otherCount = usageSorted.slice(8).reduce((n, [, c]) => n + c, 0);
+    if (otherCount > 0) usageTop.push({ label: `その他（${usageSorted.length - 8}種）`, count: otherCount, color: "#999" });
+    const histRows = STATS_BINS.map((b, i) => ({ label: b.label, count: stats.bins[i], color: b.color }));
+
+    statsHtml = `
+  <h2>建物統計 — ${escapeHtml(bldgLayer.dataset.name)}</h2>
+  <div style="display:flex;gap:10px;margin:12px 0;">
+    ${[["建物数", stats.count.toLocaleString()], ["平均高さ", avg],
+       ["最高", stats.heightMax > 0 ? stats.heightMax.toFixed(1) + " m" : "-"]].map(([label, v]) => `
+    <div style="flex:1;text-align:center;padding:12px;background:#f4f6f8;border-radius:8px;">
+      <div style="font-size:22px;font-weight:700;">${v}</div>
+      <div style="font-size:12px;color:#666;margin-top:2px;">${label}</div>
+    </div>`).join("")}
+  </div>
+  <h3>高さ分布</h3>${reportBars(histRows, stats.heightCount)}
+  <h3>用途構成</h3>${reportBars(usageTop, stats.count)}
+  <p style="font-size:11px;color:#888;">※ レポート生成時のビューに読み込まれていた建物の集計です（gml_idで重複除外）。</p>`;
+  }
+
+  return `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<title>PLATEAU Viewer レポート ${now.toLocaleDateString("ja-JP")}</title>
+<style>
+  body { font-family: "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif; max-width: 900px;
+         margin: 0 auto; padding: 24px; color: #222; line-height: 1.7; }
+  h1 { font-size: 22px; border-bottom: 3px solid #3c78c8; padding-bottom: 8px; }
+  h2 { font-size: 17px; margin-top: 28px; border-left: 4px solid #3c78c8; padding-left: 8px; }
+  h3 { font-size: 14px; margin: 16px 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid #ddd; text-align: left; }
+  th { background: #f4f6f8; }
+  img { max-width: 100%; border-radius: 8px; border: 1px solid #ddd; }
+  footer { margin-top: 28px; font-size: 11px; color: #888; border-top: 1px solid #ddd; padding-top: 10px; }
+  @media print { body { padding: 0; } }
+</style></head><body>
+<h1>PLATEAU Viewer レポート</h1>
+<p>作成日時: ${now.toLocaleString("ja-JP")}<br>
+表示位置: 緯度 ${cam.lat.toFixed(5)} / 経度 ${cam.lon.toFixed(5)} / 高度 ${Math.round(cam.h).toLocaleString()} m</p>
+<h2>表示画面</h2>
+<img src="${image}" alt="3Dビューのスクリーンショット">
+<h2>レイヤー一覧</h2>
+<table><thead><tr><th>データセット</th><th>形式</th><th>年度</th><th>状態</th></tr></thead>
+<tbody>${layerRows || '<tr><td colspan="4">レイヤーなし</td></tr>'}</tbody></table>
+${statsHtml}
+<footer>出典: 国土交通省 Project PLATEAU / 地理院タイル — PLATEAU Viewerで生成</footer>
+</body></html>`;
+}
 
 // ============================================================
 // サイドバーのタブ・属性パネル・ダイアログ

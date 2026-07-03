@@ -51,6 +51,8 @@
     <button id="areaBtn" class="tbtn" title="面積計測（3点以上クリック / ダブルクリックで確定）">⬠ 面積</button>
     <button id="walkBtn" class="tbtn" title="歩行者視点（クリック地点に立つ / WASDで移動）">🚶 歩行</button>
     <button id="clipBtn" class="tbtn" title="断面クリップ（2点クリックで断面線を指定 / Rキーで反転 / 再クリックで解除）">✂ 断面</button>
+    <button id="sightBtn" class="tbtn" title="視線解析（視点→対象の2点をクリックして見通しを判定）">👁 視線</button>
+    <button id="reportBtn" class="tbtn" title="現在の表示と統計をHTMLレポートとして保存">📄 レポート</button>
     <button id="screenshotBtn" class="tbtn" title="スクリーンショットを保存">📷</button>
     <button id="shareBtn" class="tbtn" title="現在の表示状態のURLをコピー">🔗 共有</button>
     <button id="fpsBtn" class="tbtn" title="FPS表示">FPS</button>
@@ -100,6 +102,12 @@
 
       <div id="searchStatus" class="muted"></div>
       <ul id="searchResults" class="result-list"></ul>
+
+      <div class="import-box">
+        <div class="qs-title">GeoJSONインポート（敷地境界・計画データ等）</div>
+        <button id="importBtn" class="tbtn">ファイルを選択（マップへのドロップも可）</button>
+        <input id="importFile" type="file" accept=".geojson,.json,application/geo+json" multiple class="hidden">
+      </div>
     </section>
 
     <!-- レイヤータブ -->
