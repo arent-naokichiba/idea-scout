@@ -2,12 +2,9 @@
 # （viewer/ は静的モードを備えており、サーバなしでカタログAPIを直接利用する）
 name: Deploy PLATEAU Viewer to GitHub Pages
 
+# 一時停止中: Pagesサイトの初回作成にはリポジトリ設定(Settings→Pages)が必要なため、
+# 有効化後に手動起動(workflow_dispatch)またはpushトリガーの復活で利用する
 on:
-  push:
-    branches: [claude/mlit-platform-tool-jx6o5k, master]
-    paths:
-      - "viewer/**"
-      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
