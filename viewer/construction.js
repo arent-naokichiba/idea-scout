@@ -312,9 +312,41 @@ function runCraneSweep(layer) {
     : `${steps}方位中 ${blockedCount}方位で建物と干渉（赤い円弧）`);
 }
 
+// クレーン機種プリセット（ブーム長は代表値・目安）
+const CRANE_PRESETS = [
+  ["custom", "カスタム", null],
+  ["rt25", "ラフター 25t（ブーム30.5m）", 30.5],
+  ["rt50", "ラフター 50t（ブーム38m）", 38],
+  ["rt70", "ラフター 70t（ブーム44m）", 44],
+  ["at100", "オールテレーン 100t（ブーム51m）", 51],
+  ["at200", "オールテレーン 200t（ブーム60m）", 60],
+  ["at350", "オールテレーン 350t（ブーム70m）", 70],
+];
+
 // レイヤーパネルのクレーン用コントロール
 function renderCraneRows(layer, li) {
   const c = layer.crane;
+
+  const row0 = document.createElement("div");
+  row0.className = "layer-row";
+  const presetSel = document.createElement("select");
+  for (const [key, label] of CRANE_PRESETS) {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = label;
+    if ((c.preset || "custom") === key) opt.selected = true;
+    presetSel.appendChild(opt);
+  }
+  presetSel.onchange = () => {
+    const preset = CRANE_PRESETS.find((p) => p[0] === presetSel.value);
+    c.preset = presetSel.value;
+    if (preset && preset[2]) c.boomLength = preset[2];
+    c.sweepResult = null;
+    redrawCrane(layer);
+    renderLayerList();
+  };
+  row0.append("機種", presetSel);
+  li.appendChild(row0);
 
   const row1 = document.createElement("div");
   row1.className = "layer-row";
@@ -332,6 +364,7 @@ function renderCraneRows(layer, li) {
   const apply = () => {
     c.boomLength = Math.max(5, parseFloat(boomIn.value) || 50);
     c.boomAngle = Math.min(85, Math.max(10, parseFloat(angleIn.value) || 60));
+    c.preset = "custom";
     c.sweepResult = null; // パラメータ変更で干渉結果は無効化
     redrawCrane(layer);
     renderLayerList();
@@ -560,6 +593,435 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
 }
 
 // ============================================================
+// 車両走行パス検討（旋回可否の簡易スイープパス）
+// ============================================================
+// 設計車両の目安値（道路構造令の設計諸元等を参考。カスタム入力可）
+const VEHICLE_PRESETS = [
+  ["small", "小型トラック（2t）", { width: 1.9, length: 4.7, turnRadius: 6 }],
+  ["medium", "中型トラック（4t）", { width: 2.2, length: 7.6, turnRadius: 7 }],
+  ["mixer", "ミキサー車・大型（10t）", { width: 2.5, length: 8.5, turnRadius: 9 }],
+  ["large", "大型トラック（12m）", { width: 2.5, length: 12.0, turnRadius: 12 }],
+  ["trailer", "セミトレーラー（16.5m）", { width: 2.5, length: 16.5, turnRadius: 12 }],
+  ["pump", "コンクリートポンプ車", { width: 2.5, length: 11.0, turnRadius: 10 }],
+];
+const VEHICLE_MARGIN = 0.3; // 走行帯の左右余裕[m]
+
+const vehicleState = { active: false, points: [], previewEntities: [] };
+let vehicleCounter = 0;
+
+$("vehicleBtn").onclick = () => {
+  if (vehicleState.active) {
+    cancelVehicleDraw();
+    return;
+  }
+  vehicleState.active = true;
+  vehicleState.points = [];
+  $("vehicleBtn").classList.add("active");
+  closeDrawer();
+  showHint("走行ルートを順にクリック（ダブルクリックで確定 / Escで中止）");
+};
+
+function cancelVehicleDraw() {
+  vehicleState.active = false;
+  vehicleState.points = [];
+  for (const e of vehicleState.previewEntities) viewer.entities.remove(e);
+  vehicleState.previewEntities = [];
+  $("vehicleBtn").classList.remove("active");
+  hideHint();
+  requestRender();
+}
+
+function vehicleAddPoint(windowPos) {
+  const pos = pickPosition(windowPos);
+  if (!Cesium.defined(pos)) return;
+  const pts = vehicleState.points;
+  // ダブルクリック由来の重複点を除外
+  if (pts.length > 0 && Cesium.Cartesian3.distance(pts[pts.length - 1], pos) < 1.0) return;
+  pts.push(pos);
+  vehicleState.previewEntities.push(viewer.entities.add({
+    position: pos,
+    point: { pixelSize: 7, color: Cesium.Color.fromCssColorString("#5fd08a"), disableDepthTestDistance: Number.POSITIVE_INFINITY },
+  }));
+  if (pts.length >= 2) {
+    vehicleState.previewEntities.push(viewer.entities.add({
+      polyline: { positions: [pts[pts.length - 2], pts[pts.length - 1]], width: 2, material: Cesium.Color.fromCssColorString("#5fd08a").withAlpha(0.7) },
+    }));
+  }
+  requestRender();
+}
+
+function finishVehicleDraw() {
+  const pts = vehicleState.points.slice();
+  cancelVehicleDraw();
+  if (pts.length < 2) {
+    toast("2点以上クリックしてルートを描いてください");
+    return;
+  }
+  const preset = VEHICLE_PRESETS[2]; // デフォルト: ミキサー車・大型10t
+  const layer = {
+    id: `vehicle-${++vehicleCounter}`,
+    dataset: { name: `🚚 車両パス ${vehicleCounter}`, format: "シミュレーション", type: "施工計画", type_en: "vehicle" },
+    kind: "vehicle",
+    visible: true,
+    loading: false,
+    entities: [],
+    vehicle: { points: pts, preset: preset[0], ...preset[2], result: null },
+  };
+  state.layers.push(layer);
+  rebuildVehiclePath(layer);
+  renderLayerList();
+}
+
+// ENU平面（起点基準）での2D計算ユーティリティ
+function vehicleTo2d(points) {
+  const enu = Cesium.Transforms.eastNorthUpToFixedFrame(points[0]);
+  const inv = Cesium.Matrix4.inverse(enu, new Cesium.Matrix4());
+  return {
+    enu,
+    pts: points.map((p) => {
+      const local = Cesium.Matrix4.multiplyByPoint(inv, p, new Cesium.Cartesian3());
+      return { x: local.x, y: local.y };
+    }),
+  };
+}
+
+function vehicleToWorld(enu, x, y, z = 0.4) {
+  return Cesium.Matrix4.multiplyByPoint(enu, new Cesium.Cartesian3(x, y, z), new Cesium.Cartesian3());
+}
+
+function rebuildVehiclePath(layer) {
+  for (const e of layer.entities) viewer.entities.remove(e);
+  layer.entities = [];
+  const v = layer.vehicle;
+  const { enu, pts } = vehicleTo2d(v.points);
+  const half = v.width / 2 + VEHICLE_MARGIN;
+  const green = Cesium.Color.fromCssColorString("#5fd08a");
+  const red = Cesium.Color.fromCssColorString("#e05656");
+
+  // 各セグメントの走行帯（車幅+余裕の帯）
+  let totalLen = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    totalLen += len;
+    if (len < 0.01) continue;
+    const nx = -dy / len * half, ny = dx / len * half; // 左法線
+    const corners = [
+      vehicleToWorld(enu, a.x + nx, a.y + ny),
+      vehicleToWorld(enu, b.x + nx, b.y + ny),
+      vehicleToWorld(enu, b.x - nx, b.y - ny),
+      vehicleToWorld(enu, a.x - nx, a.y - ny),
+    ];
+    layer.entities.push(viewer.entities.add({
+      polygon: {
+        hierarchy: new Cesium.PolygonHierarchy(corners),
+        material: Cesium.Color.fromCssColorString("#4da3ff").withAlpha(0.25),
+        perPositionHeight: true,
+      },
+    }));
+  }
+  // 中心線
+  layer.entities.push(viewer.entities.add({
+    polyline: {
+      positions: pts.map((p) => vehicleToWorld(enu, p.x, p.y, 0.6)),
+      width: 2,
+      material: Cesium.Color.WHITE.withAlpha(0.8),
+    },
+  }));
+
+  // 各コーナーの旋回判定（最小回転半径のフィレットが収まるか）
+  let ngCount = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1], p1 = pts[i], p2 = pts[i + 1];
+    const v1 = { x: p1.x - p0.x, y: p1.y - p0.y };
+    const v2 = { x: p2.x - p1.x, y: p2.y - p1.y };
+    const l1 = Math.hypot(v1.x, v1.y), l2 = Math.hypot(v2.x, v2.y);
+    if (l1 < 0.01 || l2 < 0.01) continue;
+    const u1 = { x: v1.x / l1, y: v1.y / l1 };
+    const u2 = { x: v2.x / l2, y: v2.y / l2 };
+    const cross = u1.x * u2.y - u1.y * u2.x;
+    const dot = Math.max(-1, Math.min(1, u1.x * u2.x + u1.y * u2.y));
+    const deflection = Math.acos(dot); // 転向角[rad]
+    if (deflection < 0.03) continue; // ほぼ直進
+
+    const R = v.turnRadius;
+    const tangent = R * Math.tan(deflection / 2); // 接線長
+    // 前後セグメントに接線長が収まれば旋回可（隣のコーナーと共有するため半分まで）
+    const ok = tangent <= l1 * 0.75 && tangent <= l2 * 0.75;
+    if (!ok) ngCount++;
+
+    // フィレット円弧を描画
+    const t1 = { x: p1.x - u1.x * tangent, y: p1.y - u1.y * tangent };
+    const side = cross > 0 ? 1 : -1; // 左折=1 右折=-1
+    const n1 = { x: -u1.y * side, y: u1.x * side }; // 旋回中心方向の法線
+    const center = { x: t1.x + n1.x * R, y: t1.y + n1.y * R };
+    const startAng = Math.atan2(t1.y - center.y, t1.x - center.x);
+    const arcPositions = [];
+    const steps = 12;
+    for (let s = 0; s <= steps; s++) {
+      const ang = startAng + side * deflection * (s / steps);
+      arcPositions.push(vehicleToWorld(enu, center.x + R * Math.cos(ang), center.y + R * Math.sin(ang), 0.8));
+    }
+    layer.entities.push(viewer.entities.add({
+      polyline: { positions: arcPositions, width: 5, material: ok ? green : red },
+    }));
+    if (!ok) {
+      layer.entities.push(viewer.entities.add({
+        position: vehicleToWorld(enu, p1.x, p1.y, 2),
+        label: measureLabel(`要切り返し（R${R}m が収まりません）`),
+      }));
+    }
+  }
+
+  // 起点にサマリーラベル
+  layer.entities.push(viewer.entities.add({
+    position: vehicleToWorld(enu, pts[0].x, pts[0].y, 2),
+    label: measureLabel(`${VEHICLE_PRESETS.find((p) => p[0] === v.preset)?.[1] || "カスタム"} / 全長${totalLen.toFixed(0)}m`),
+  }));
+
+  v.result = { ngCount, corners: Math.max(0, pts.length - 2), totalLen };
+  layer.visible = true;
+  requestRender();
+}
+
+// レイヤーパネルの車両パス用コントロール
+function renderVehicleRows(layer, li) {
+  const v = layer.vehicle;
+
+  const row1 = document.createElement("div");
+  row1.className = "layer-row";
+  const presetSel = document.createElement("select");
+  for (const [key, label] of VEHICLE_PRESETS) {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = label;
+    if (v.preset === key) opt.selected = true;
+    presetSel.appendChild(opt);
+  }
+  presetSel.onchange = () => {
+    const preset = VEHICLE_PRESETS.find((p) => p[0] === presetSel.value);
+    v.preset = presetSel.value;
+    Object.assign(v, preset[2]);
+    rebuildVehiclePath(layer);
+    renderLayerList();
+  };
+  row1.append("車種", presetSel);
+  li.appendChild(row1);
+
+  const row2 = document.createElement("div");
+  row2.className = "layer-row";
+  const widthIn = document.createElement("input");
+  widthIn.type = "number";
+  widthIn.step = "0.1";
+  widthIn.value = v.width;
+  const radiusIn = document.createElement("input");
+  radiusIn.type = "number";
+  radiusIn.step = "0.5";
+  radiusIn.value = v.turnRadius;
+  const apply = () => {
+    v.width = Math.max(1, parseFloat(widthIn.value) || 2.5);
+    v.turnRadius = Math.max(2, parseFloat(radiusIn.value) || 9);
+    rebuildVehiclePath(layer);
+    renderLayerList();
+  };
+  widthIn.onchange = radiusIn.onchange = apply;
+  row2.append("車幅(m)", widthIn, "回転半径(m)", radiusIn);
+  li.appendChild(row2);
+
+  if (v.result) {
+    const row3 = document.createElement("div");
+    row3.className = "layer-row";
+    row3.textContent = v.result.ngCount === 0
+      ? `✅ 全${v.result.corners}コーナー旋回可（全長${v.result.totalLen.toFixed(0)}m）`
+      : `⚠ ${v.result.ngCount}/${v.result.corners}コーナーで要切り返し`;
+    li.appendChild(row3);
+  }
+}
+
+// ============================================================
+// ヤード作図（資材置き場・仮設事務所・仮囲い等）
+// ============================================================
+const ZONE_TYPES = [
+  ["material", "資材置き場", "#f2d13e", 2.0],
+  ["office", "仮設事務所", "#4da3ff", 3.0],
+  ["parking", "車両待機・駐車", "#5fd08a", 0.3],
+  ["danger", "立入禁止・危険区域", "#e05656", 0.3],
+  ["fence", "仮囲い", "#9aa1ac", 3.0],
+];
+
+const zoneState = { active: false, points: [], previewEntities: [] };
+let zoneCounter = 0;
+
+$("zoneBtn").onclick = () => {
+  if (zoneState.active) {
+    cancelZoneDraw();
+    return;
+  }
+  zoneState.active = true;
+  zoneState.points = [];
+  $("zoneBtn").classList.add("active");
+  closeDrawer();
+  showHint("ヤードの頂点を順にクリック（3点以上・ダブルクリックで確定 / Escで中止）");
+};
+
+function cancelZoneDraw() {
+  zoneState.active = false;
+  zoneState.points = [];
+  for (const e of zoneState.previewEntities) viewer.entities.remove(e);
+  zoneState.previewEntities = [];
+  $("zoneBtn").classList.remove("active");
+  hideHint();
+  requestRender();
+}
+
+function zoneAddPoint(windowPos) {
+  const pos = pickPosition(windowPos);
+  if (!Cesium.defined(pos)) return;
+  const pts = zoneState.points;
+  if (pts.length > 0 && Cesium.Cartesian3.distance(pts[pts.length - 1], pos) < 1.0) return;
+  pts.push(pos);
+  zoneState.previewEntities.push(viewer.entities.add({
+    position: pos,
+    point: { pixelSize: 7, color: Cesium.Color.fromCssColorString("#f2d13e"), disableDepthTestDistance: Number.POSITIVE_INFINITY },
+  }));
+  if (pts.length >= 2) {
+    zoneState.previewEntities.push(viewer.entities.add({
+      polyline: { positions: [pts[pts.length - 2], pts[pts.length - 1]], width: 2, material: Cesium.Color.fromCssColorString("#f2d13e").withAlpha(0.7) },
+    }));
+  }
+  requestRender();
+}
+
+function finishZoneDraw() {
+  const pts = zoneState.points.slice();
+  cancelZoneDraw();
+  if (pts.length < 3) {
+    toast("3点以上クリックして範囲を描いてください");
+    return;
+  }
+  const layer = {
+    id: `zone-${++zoneCounter}`,
+    dataset: { name: `⬛ 資材置き場 ${zoneCounter}`, format: "作図", type: "施工計画", type_en: "zone" },
+    kind: "zone",
+    visible: true,
+    loading: false,
+    entities: [],
+    zone: { points: pts, type: "material", label: `資材置き場 ${zoneCounter}` },
+  };
+  state.layers.push(layer);
+  rebuildZone(layer);
+  renderLayerList();
+}
+
+function rebuildZone(layer) {
+  for (const e of layer.entities) viewer.entities.remove(e);
+  layer.entities = [];
+  const z = layer.zone;
+  const def = ZONE_TYPES.find((t) => t[0] === z.type) || ZONE_TYPES[0];
+  const color = Cesium.Color.fromCssColorString(def[2]);
+  const groundHeight = Cesium.Cartographic.fromCartesian(z.points[0]).height;
+  const area = polygonArea(z.points);
+  z.area = area;
+
+  layer.entities.push(viewer.entities.add({
+    polygon: {
+      hierarchy: new Cesium.PolygonHierarchy(z.points),
+      material: color.withAlpha(z.type === "fence" ? 0.15 : 0.4),
+      height: groundHeight,
+      extrudedHeight: groundHeight + def[3],
+      outline: true,
+      outlineColor: color,
+    },
+  }));
+  // 中心にラベル（名称と面積）
+  const center = Cesium.BoundingSphere.fromPoints(z.points).center;
+  const centerCarto = Cesium.Cartographic.fromCartesian(center);
+  layer.entities.push(viewer.entities.add({
+    position: Cesium.Cartesian3.fromRadians(centerCarto.longitude, centerCarto.latitude, groundHeight + def[3] + 2),
+    label: measureLabel(`${z.label}（${area >= 10000 ? (area / 10000).toFixed(2) + " ha" : area.toFixed(0) + " m²"}）`),
+  }));
+  layer.dataset.name = `⬛ ${z.label}`;
+  layer.visible = true;
+  requestRender();
+}
+
+// レイヤーパネルのヤード用コントロール
+function renderZoneRows(layer, li) {
+  const z = layer.zone;
+
+  const row1 = document.createElement("div");
+  row1.className = "layer-row";
+  const typeSel = document.createElement("select");
+  for (const [key, label] of ZONE_TYPES) {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = label;
+    if (z.type === key) opt.selected = true;
+    typeSel.appendChild(opt);
+  }
+  typeSel.onchange = () => {
+    const def = ZONE_TYPES.find((t) => t[0] === typeSel.value);
+    // 既定名のままなら種別名に合わせて更新
+    if (ZONE_TYPES.some((t) => z.label.startsWith(t[1]))) {
+      z.label = `${def[1]} ${layer.id.split("-")[1]}`;
+    }
+    z.type = typeSel.value;
+    rebuildZone(layer);
+    renderLayerList();
+  };
+  row1.append("種別", typeSel);
+  li.appendChild(row1);
+
+  const row2 = document.createElement("div");
+  row2.className = "layer-row";
+  const nameIn = document.createElement("input");
+  nameIn.type = "text";
+  nameIn.value = z.label;
+  nameIn.style.flex = "1";
+  nameIn.onchange = () => {
+    z.label = nameIn.value || z.label;
+    rebuildZone(layer);
+    renderLayerList();
+  };
+  row2.append("名称", nameIn);
+  li.appendChild(row2);
+
+  const row3 = document.createElement("div");
+  row3.className = "layer-row";
+  const info = document.createElement("span");
+  info.textContent = `面積 ${z.area >= 10000 ? (z.area / 10000).toFixed(2) + " ha" : (z.area || 0).toFixed(0) + " m²"}`;
+  const exportBtn = document.createElement("button");
+  exportBtn.className = "tbtn";
+  exportBtn.textContent = "全ヤードをGeoJSON保存";
+  exportBtn.title = "作図した全ヤードをGeoJSONで保存（インポートで再利用可）";
+  exportBtn.onclick = exportZonesGeojson;
+  row3.append(info, exportBtn);
+  li.appendChild(row3);
+}
+
+function exportZonesGeojson() {
+  const zones = state.layers.filter((l) => l.kind === "zone");
+  if (zones.length === 0) return;
+  const features = zones.map((l) => {
+    const coords = l.zone.points.map((p) => {
+      const c = Cesium.Cartographic.fromCartesian(p);
+      return [Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude)];
+    });
+    coords.push(coords[0]); // リングを閉じる
+    const def = ZONE_TYPES.find((t) => t[0] === l.zone.type);
+    return {
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [coords] },
+      properties: { 名称: l.zone.label, 種別: def ? def[1] : l.zone.type, "面積m2": Math.round(l.zone.area || 0) },
+    };
+  });
+  downloadFile(JSON.stringify({ type: "FeatureCollection", name: "施工ヤード計画", features }),
+    `plateau-yards-${exportTimestamp()}.geojson`, "application/geo+json");
+  toast(`${features.length}件のヤードをGeoJSONで保存しました`);
+}
+
+// ============================================================
 // app.js からの委譲（クリック / Esc）
 // ============================================================
 function constructionHandleClick(windowPos) {
@@ -573,6 +1035,26 @@ function constructionHandleClick(windowPos) {
   }
   if (surveyState.arming) {
     runSurveyAt(windowPos);
+    return true;
+  }
+  if (vehicleState.active) {
+    vehicleAddPoint(windowPos);
+    return true;
+  }
+  if (zoneState.active) {
+    zoneAddPoint(windowPos);
+    return true;
+  }
+  return false;
+}
+
+function constructionHandleDoubleClick() {
+  if (vehicleState.active) {
+    finishVehicleDraw();
+    return true;
+  }
+  if (zoneState.active) {
+    finishZoneDraw();
     return true;
   }
   return false;
@@ -595,6 +1077,14 @@ function constructionHandleEscape() {
     surveyState.arming = false;
     $("surveyBtn").classList.remove("active");
     hideHint();
+    return true;
+  }
+  if (vehicleState.active) {
+    cancelVehicleDraw();
+    return true;
+  }
+  if (zoneState.active) {
+    cancelZoneDraw();
     return true;
   }
   return false;

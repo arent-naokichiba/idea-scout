@@ -605,6 +605,16 @@ function renderLayerList() {
       list.appendChild(li);
       continue;
     }
+    if (layer.kind === "vehicle") {
+      renderVehicleRows(layer, li);
+      list.appendChild(li);
+      continue;
+    }
+    if (layer.kind === "zone") {
+      renderZoneRows(layer, li);
+      list.appendChild(li);
+      continue;
+    }
 
     // 色分けスタイル（3D Tilesのみ）
     if (layer.kind === "tiles") {
@@ -1181,6 +1191,9 @@ function polygonArea(positions) {
 }
 
 pickHandler.setInputAction(() => {
+  if (typeof constructionHandleDoubleClick === "function" && constructionHandleDoubleClick()) {
+    return;
+  }
   if (measureState.active) {
     stopMeasure(true);
     toast("計測を確定しました（📏/⬠ボタンでクリア）");
@@ -1582,8 +1595,8 @@ $("addBookmarkBtn").onclick = () => {
 function serializeState() {
   return {
     camera: getCameraState(),
-    // ファイル・操作由来のレイヤー（GeoJSON/BIMモデル/クレーン）は保存対象外
-    layers: state.layers.filter((l) => !["geojson", "model", "crane"].includes(l.kind)).map((l) => ({
+    // ファイル・操作由来のレイヤー（GeoJSON/BIMモデル/施工計画）は保存対象外
+    layers: state.layers.filter((l) => !["geojson", "model", "crane", "vehicle", "zone"].includes(l.kind)).map((l) => ({
       id: l.id,
       visible: l.visible,
       style: l.style,
