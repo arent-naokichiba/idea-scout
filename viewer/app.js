@@ -345,6 +345,11 @@ async function addGeojsonLayer(name, geojson) {
 
 function importGeojsonFiles(files) {
   for (const file of files) {
+    // glTF/GLBはBIMモデルとして配置モードへ
+    if (/\.(glb|gltf)$/i.test(file.name)) {
+      handleModelFile(file);
+      continue;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       try {
@@ -438,6 +443,9 @@ function removeLayer(layer) {
   if (layer.tileset) viewer.scene.primitives.remove(layer.tileset);
   if (layer.imageryLayer) viewer.imageryLayers.remove(layer.imageryLayer);
   if (layer.dataSource) viewer.dataSources.remove(layer.dataSource, true);
+  if (layer.entity) viewer.entities.remove(layer.entity);
+  if (layer.entities) for (const e of layer.entities) viewer.entities.remove(e);
+  if (layer.model && layer.model.url) URL.revokeObjectURL(layer.model.url);
   state.layers = state.layers.filter((l) => l !== layer);
   clearSelection();
   renderLayerList();
@@ -521,6 +529,8 @@ function renderLayerList() {
       if (layer.tileset) layer.tileset.show = layer.visible;
       if (layer.imageryLayer) layer.imageryLayer.show = layer.visible;
       if (layer.dataSource) layer.dataSource.show = layer.visible;
+      if (layer.entity) layer.entity.show = layer.visible;
+      if (layer.entities) for (const e of layer.entities) e.show = layer.visible;
       renderLayerList();
       saveState();
       requestRender();
@@ -534,6 +544,8 @@ function renderLayerList() {
     const zoomBtn = iconBtn("🎯", "このレイヤーに移動", () => {
       if (layer.tileset) viewer.flyTo(layer.tileset, { duration: 1.2 });
       else if (layer.dataSource) viewer.flyTo(layer.dataSource, { duration: 1.2 });
+      else if (layer.entity) viewer.flyTo(layer.entity, { duration: 1.2 });
+      else if (layer.entities && layer.entities.length) viewer.flyTo(layer.entities, { duration: 1.2 });
       else if (layer.kind === "mvt") flyToMvtHome(layer);
       else if (layer.kind === "hazard") flyToJapan();
     });
@@ -582,6 +594,16 @@ function renderLayerList() {
     if (layer.kind === "geojson") {
       list.appendChild(li);
       continue; // GeoJSONはスタイル・透明度コントロールなし
+    }
+    if (layer.kind === "model") {
+      renderModelRows(layer, li);
+      list.appendChild(li);
+      continue;
+    }
+    if (layer.kind === "crane") {
+      renderCraneRows(layer, li);
+      list.appendChild(li);
+      continue;
     }
 
     // 色分けスタイル（3D Tilesのみ）
@@ -925,6 +947,10 @@ pickHandler.setInputAction((movement) => {
   }
   if (walkState.arming) {
     startWalkAt(movement.position);
+    return;
+  }
+  // 施工・BIM機能（モデル配置 / クレーン / 近隣調査）のクリック処理
+  if (typeof constructionHandleClick === "function" && constructionHandleClick(movement.position)) {
     return;
   }
   if (clipState.arming) {
@@ -1400,6 +1426,7 @@ function exitWalk() {
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    if (typeof constructionHandleEscape === "function" && constructionHandleEscape()) return;
     if (walkState.active || walkState.arming) exitWalk();
     else if (measureState.active) stopMeasure(false);
     else if (sightState.arming || sightState.entities.length > 0) clearSight();
@@ -1555,8 +1582,8 @@ $("addBookmarkBtn").onclick = () => {
 function serializeState() {
   return {
     camera: getCameraState(),
-    // GeoJSONインポートはファイル由来のため保存対象外
-    layers: state.layers.filter((l) => l.kind !== "geojson").map((l) => ({
+    // ファイル・操作由来のレイヤー（GeoJSON/BIMモデル/クレーン）は保存対象外
+    layers: state.layers.filter((l) => !["geojson", "model", "crane"].includes(l.kind)).map((l) => ({
       id: l.id,
       visible: l.visible,
       style: l.style,

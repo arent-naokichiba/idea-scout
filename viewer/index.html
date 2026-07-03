@@ -55,6 +55,8 @@
     <button id="walkBtn" class="tbtn" title="歩行者視点（クリック地点に立つ / WASDで移動）">🚶 歩行</button>
     <button id="clipBtn" class="tbtn" title="断面クリップ（2点クリックで断面線を指定 / Rキーで反転 / 再クリックで解除）">✂ 断面</button>
     <button id="sightBtn" class="tbtn" title="視線解析（視点→対象の2点をクリックして見通しを判定）">👁 視線</button>
+    <button id="craneBtn" class="tbtn" title="クレーン配置（設置地点をクリック→ブーム長・起伏角を設定して干渉チェック）">🏗 クレーン</button>
+    <button id="surveyBtn" class="tbtn" title="近隣調査（中心地点をクリック→半径内の建物を抽出してリスト化）">📋 調査</button>
     <button id="reportBtn" class="tbtn" title="現在の表示と統計をHTMLレポートとして保存">📄 レポート</button>
     <button id="screenshotBtn" class="tbtn" title="スクリーンショットを保存">📷</button>
     <button id="shareBtn" class="tbtn" title="現在の表示状態のURLをコピー">🔗 共有</button>
@@ -120,9 +122,9 @@
       <ul id="searchResults" class="result-list"></ul>
 
       <div class="import-box">
-        <div class="qs-title">GeoJSONインポート（敷地境界・計画データ等）</div>
+        <div class="qs-title">インポート — GeoJSON（敷地境界等） / glTF・GLB（BIMモデル）</div>
         <button id="importBtn" class="tbtn">ファイルを選択（マップへのドロップも可）</button>
-        <input id="importFile" type="file" accept=".geojson,.json,application/geo+json" multiple class="hidden">
+        <input id="importFile" type="file" accept=".geojson,.json,.glb,.gltf,application/geo+json,model/gltf-binary" multiple class="hidden">
       </div>
     </section>
 
@@ -192,6 +194,15 @@
   </div>
 </dialog>
 
+<!-- 近隣調査リストダイアログ -->
+<dialog id="surveyDialog">
+  <div class="panel-head"><span id="surveyTitle"></span><button id="surveyCloseBtn" class="tbtn">✕</button></div>
+  <div id="surveyBody"></div>
+  <div class="dialog-actions">
+    <button id="surveyCsvBtn" class="tbtn">CSVエクスポート</button>
+  </div>
+</dialog>
+
 <div id="toast" class="hidden"></div>
 
 <script src="vendor/mvt.js"></script>
@@ -199,5 +210,6 @@
 <script src="mvt-layer.js"></script>
 <script src="static-api.js"></script>
 <script src="app.js"></script>
+<script src="construction.js"></script>
 </body>
 </html>
