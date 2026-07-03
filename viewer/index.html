@@ -34,6 +34,8 @@
       品質 <input id="sseSlider" type="range" min="2" max="48" step="1" value="16">
     </label>
     <button id="shadowBtn" class="tbtn" title="影のON/OFF">影</button>
+    <button id="terrainBtn" class="tbtn" title="地形の起伏（地理院標高タイル）">⛰ 地形</button>
+    <button id="compareBtn" class="tbtn" title="左右比較（レイヤーごとに表示側を指定して比較）">⇔ 比較</button>
     <label class="ctrl hidden" id="timeCtrl" title="時刻（日照シミュレーション）">
       🕒 <input id="timeSlider" type="range" min="5" max="20" step="0.25" value="12">
       <span id="timeLabel">12:00</span>
@@ -113,6 +115,7 @@
     <div id="loadingOverlay"><div class="spinner"></div><div>読み込み中...</div></div>
     <div id="tileProgress" class="hidden">タイル読み込み中 <span id="tileProgressCount"></span></div>
     <div id="measureHint" class="hidden">クリックで測点を追加 / ダブルクリックで終了 / Escで中止</div>
+    <div id="splitSlider" class="hidden" title="ドラッグで比較位置を移動"><div class="split-handle">⇔</div></div>
   </div>
 
   <!-- 右: 属性パネル -->
@@ -147,9 +150,16 @@
   </div>
 </dialog>
 
+<!-- 建物統計ダイアログ -->
+<dialog id="statsDialog">
+  <div class="panel-head"><span id="statsTitle"></span><button id="statsCloseBtn" class="tbtn">✕</button></div>
+  <div id="statsBody"></div>
+</dialog>
+
 <div id="toast" class="hidden"></div>
 
 <script src="vendor/mvt.js"></script>
+<script src="gsi-terrain.js"></script>
 <script src="mvt-layer.js"></script>
 <script src="app.js"></script>
 </body>

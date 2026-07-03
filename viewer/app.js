@@ -5,10 +5,12 @@
 // 状態
 // ============================================================
 const state = {
-  layers: [],        // {id, dataset, tileset, visible, style, opacity, heightProp, heightRange, heightFilter, pending}
+  layers: [],        // {id, dataset, kind, tileset|imageryLayer, visible, style, opacity, split, ...}
   sse: 16,           // maximumScreenSpaceError（小=高品質、大=高速）
   basemap: "photo",
   shadows: false,
+  terrain: false,    // 地理院標高タイルによる地形
+  compare: false,    // 左右比較モード
 };
 
 const STORAGE_KEY = "plateau-viewer-state";
@@ -163,6 +165,7 @@ async function addDataset(dataset, options = {}) {
     layer.loading = false;
     tileset.show = layer.visible;
     viewer.scene.primitives.add(tileset);
+    applySplit(layer);
 
     // 高さ属性の検出（tileset.jsonのproperties由来）
     const props = tileset.properties;
@@ -229,6 +232,7 @@ async function addMvtLayer(dataset, options = {}) {
     show: layer.visible,
   });
   viewer.imageryLayers.add(layer.imageryLayer);
+  applySplit(layer);
 
   state.layers.push(layer);
   renderLayerList();
@@ -378,8 +382,34 @@ function renderLayerList() {
     const delBtn = iconBtn("🗑", "削除", () => removeLayer(layer));
     delBtn.classList.add("danger");
 
-    head.append(eye, name, zoomBtn, infoBtn, delBtn);
+    head.append(eye, name, zoomBtn);
+    if (layer.kind === "tiles" && layer.dataset.type_en === "bldg" && layer.tileset) {
+      head.appendChild(iconBtn("📊", "表示中の建物を集計", () => showStats(layer)));
+    }
+    head.append(infoBtn, delBtn);
     li.appendChild(head);
+
+    // 比較モード時の表示側指定
+    if (state.compare && !layer.loading) {
+      const splitRow = document.createElement("div");
+      splitRow.className = "layer-row";
+      const splitSel = document.createElement("select");
+      for (const [v, label] of [["both", "両側に表示"], ["left", "左側のみ"], ["right", "右側のみ"]]) {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = label;
+        if ((layer.split || "both") === v) opt.selected = true;
+        splitSel.appendChild(opt);
+      }
+      splitSel.onchange = () => {
+        layer.split = splitSel.value;
+        applySplit(layer);
+        saveState();
+        requestRender();
+      };
+      splitRow.append("比較", splitSel);
+      li.appendChild(splitRow);
+    }
 
     if (layer.loading) {
       const loading = document.createElement("div");
@@ -1143,9 +1173,12 @@ function serializeState() {
       style: l.style,
       opacity: l.opacity,
       heightFilter: l.heightFilter,
+      split: l.split,
     })),
     basemap: state.basemap,
     sse: state.sse,
+    terrain: state.terrain,
+    compare: state.compare,
   };
 }
 
@@ -1163,6 +1196,7 @@ async function restoreState(saved, fly) {
     state.sse = saved.sse;
     $("sseSlider").value = saved.sse;
   }
+  if (saved.terrain) setTerrain(true);
   if (saved.camera) setCameraState(saved.camera, fly ? 1.2 : 0);
   if (Array.isArray(saved.layers)) {
     for (const ls of saved.layers) {
@@ -1172,13 +1206,16 @@ async function restoreState(saved, fly) {
         opacity: ls.opacity,
         fly: false,
       });
-      if (layer && ls.heightFilter) {
+      if (!layer) continue;
+      if (ls.split) layer.split = ls.split;
+      if (ls.heightFilter) {
         layer.heightFilter = ls.heightFilter;
         applyLayerStyle(layer);
-        renderLayerList();
       }
     }
+    renderLayerList();
   }
+  if (saved.compare) setCompare(true);
 }
 
 $("shareBtn").onclick = () => {
@@ -1220,6 +1257,66 @@ $("sseSlider").oninput = (e) => {
   requestRender();
 };
 $("sseSlider").onchange = saveState;
+
+// ---------- 地形（地理院標高タイル） ----------
+$("terrainBtn").onclick = () => setTerrain(!state.terrain);
+
+function setTerrain(on) {
+  state.terrain = on;
+  $("terrainBtn").classList.toggle("active", on);
+  viewer.terrainProvider = on ? new GsiTerrainProvider() : new Cesium.EllipsoidTerrainProvider();
+  viewer.scene.globe.depthTestAgainstTerrain = on;
+  saveState();
+  requestRender();
+}
+
+// ---------- 左右比較モード ----------
+$("compareBtn").onclick = () => setCompare(!state.compare);
+
+function setCompare(on) {
+  state.compare = on;
+  $("compareBtn").classList.toggle("active", on);
+  $("splitSlider").classList.toggle("hidden", !on);
+  if (on) {
+    viewer.scene.splitPosition = 0.5;
+    $("splitSlider").style.left = "50%";
+  }
+  for (const l of state.layers) applySplit(l);
+  renderLayerList();
+  saveState();
+  requestRender();
+}
+
+function applySplit(layer) {
+  const dir =
+    !state.compare || !layer.split || layer.split === "both"
+      ? Cesium.SplitDirection.NONE
+      : layer.split === "left"
+        ? Cesium.SplitDirection.LEFT
+        : Cesium.SplitDirection.RIGHT;
+  if (layer.tileset) layer.tileset.splitDirection = dir;
+  if (layer.imageryLayer) layer.imageryLayer.splitDirection = dir;
+}
+
+// 分割バーのドラッグ
+(() => {
+  const slider = $("splitSlider");
+  let dragging = false;
+  slider.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    slider.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  slider.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const rect = $("cesiumContainer").getBoundingClientRect();
+    const frac = Math.min(0.95, Math.max(0.05, (e.clientX - rect.left) / rect.width));
+    viewer.scene.splitPosition = frac;
+    slider.style.left = `${frac * 100}%`;
+    requestRender();
+  });
+  slider.addEventListener("pointerup", () => { dragging = false; saveState(); });
+})();
 
 $("shadowBtn").onclick = () => {
   state.shadows = !state.shadows;
@@ -1266,6 +1363,180 @@ $("fpsBtn").onclick = () => {
 };
 
 $("homeBtn").onclick = () => flyToJapan();
+
+// ============================================================
+// 建物統計（現在のビューに読み込まれている建物を集計）
+// ============================================================
+// ヒストグラムの色は地図の「高さで色分け」と同一（HEIGHT_RAMPと対応）
+const STATS_BINS = [
+  { label: "〜12m", max: 12, color: "#3d7dc8" },
+  { label: "12〜31m", max: 31, color: "#5fb0a5" },
+  { label: "31〜60m", max: 60, color: "#9ecf63" },
+  { label: "60〜120m", max: 120, color: "#f2d13e" },
+  { label: "120〜180m", max: 180, color: "#f2913e" },
+  { label: "180m〜", max: Infinity, color: "#e0452f" },
+];
+const USAGE_PROPS = ["bldg:usage", "用途", "usage"];
+
+function postRenderOnce() {
+  return new Promise((resolve) => {
+    const remove = viewer.scene.postRender.addEventListener(() => {
+      remove();
+      resolve();
+    });
+    viewer.scene.requestRender();
+  });
+}
+
+function featureProp(feature, names) {
+  for (const n of names) {
+    try {
+      const v = feature.getProperty(n);
+      if (v !== undefined && v !== null && v !== "") return v;
+    } catch (e) { /* 属性なし */ }
+  }
+  return undefined;
+}
+
+async function showStats(layer) {
+  if (!layer.tileset) return;
+  toast("表示中の建物を集計しています...");
+
+  // 次の描画フレームで可視タイルを収集する
+  const tiles = new Set();
+  const collect = (tile) => tiles.add(tile);
+  layer.tileset.tileVisible.addEventListener(collect);
+  await postRenderOnce();
+  layer.tileset.tileVisible.removeEventListener(collect);
+
+  const seen = new Set();
+  let count = 0;
+  let heightSum = 0, heightMax = 0, heightCount = 0;
+  const bins = STATS_BINS.map(() => 0);
+  const usage = new Map();
+
+  for (const tile of tiles) {
+    const content = tile.content;
+    if (!content || !content.featuresLength) continue;
+    for (let i = 0; i < content.featuresLength; i++) {
+      const f = content.getFeature(i);
+      const id = featureProp(f, ["gml_id"]);
+      if (id !== undefined) {
+        if (seen.has(id)) continue; // LOD間の重複を除外
+        seen.add(id);
+      }
+      count++;
+
+      const h = layer.heightProp ? Number(featureProp(f, [layer.heightProp])) : NaN;
+      if (Number.isFinite(h)) {
+        heightSum += h;
+        heightMax = Math.max(heightMax, h);
+        heightCount++;
+        bins[STATS_BINS.findIndex((b) => h < b.max || b.max === Infinity)]++;
+      }
+
+      const u = featureProp(f, USAGE_PROPS) || "不明";
+      usage.set(u, (usage.get(u) || 0) + 1);
+    }
+  }
+
+  renderStats(layer, { count, heightSum, heightMax, heightCount, bins, usage });
+}
+
+function renderStats(layer, s) {
+  $("statsTitle").textContent = `建物統計 — ${layer.dataset.name}`;
+  const body = $("statsBody");
+  body.innerHTML = "";
+
+  if (s.count === 0) {
+    const p = document.createElement("p");
+    p.className = "muted center";
+    p.textContent = "表示範囲に建物が読み込まれていません。建物にズームしてから再実行してください。";
+    body.appendChild(p);
+    $("statsDialog").showModal();
+    return;
+  }
+
+  // サマリータイル
+  const tiles = document.createElement("div");
+  tiles.className = "stats-tiles";
+  const avg = s.heightCount > 0 ? s.heightSum / s.heightCount : null;
+  for (const [label, value] of [
+    ["建物数", s.count.toLocaleString()],
+    ["平均高さ", avg != null ? avg.toFixed(1) + " m" : "-"],
+    ["最高", s.heightMax > 0 ? s.heightMax.toFixed(1) + " m" : "-"],
+  ]) {
+    const tile = document.createElement("div");
+    tile.className = "stat-tile";
+    const v = document.createElement("div");
+    v.className = "stat-value";
+    v.textContent = value;
+    const l = document.createElement("div");
+    l.className = "stat-label";
+    l.textContent = label;
+    tile.append(v, l);
+    tiles.appendChild(tile);
+  }
+  body.appendChild(tiles);
+
+  // 高さ分布（地図の高さ色分けと同じ色）
+  if (s.heightCount > 0) {
+    body.appendChild(statsSection("高さ分布", STATS_BINS.map((b, i) => ({
+      label: b.label,
+      count: s.bins[i],
+      color: b.color,
+    })), s.heightCount));
+  }
+
+  // 用途構成（上位8 + その他）
+  const sorted = [...s.usage.entries()].sort((a, b) => b[1] - a[1]);
+  const top = sorted.slice(0, 8);
+  const otherCount = sorted.slice(8).reduce((n, [, c]) => n + c, 0);
+  const rows = top.map(([label, count]) => ({ label, count, color: "#4da3ff" }));
+  if (otherCount > 0) rows.push({ label: `その他（${sorted.length - 8}種）`, count: otherCount, color: "#9aa1ac" });
+  body.appendChild(statsSection("用途構成", rows, s.count));
+
+  const note = document.createElement("div");
+  note.className = "muted stats-note";
+  note.textContent = "※ 現在のビューに読み込まれている建物の集計です（gml_idで重複除外）。";
+  body.appendChild(note);
+
+  $("statsDialog").showModal();
+}
+
+function statsSection(title, rows, total) {
+  const section = document.createElement("div");
+  section.className = "stats-section";
+  const h = document.createElement("div");
+  h.className = "stats-heading";
+  h.textContent = title;
+  section.appendChild(h);
+
+  const maxCount = Math.max(1, ...rows.map((r) => r.count));
+  for (const row of rows) {
+    const div = document.createElement("div");
+    div.className = "bar-row";
+    div.title = `${row.label}: ${row.count.toLocaleString()}件 (${((row.count / total) * 100).toFixed(1)}%)`;
+    const label = document.createElement("div");
+    label.className = "bar-label";
+    label.textContent = row.label;
+    const track = document.createElement("div");
+    track.className = "bar-track";
+    const fill = document.createElement("div");
+    fill.className = "bar-fill";
+    fill.style.width = `${(row.count / maxCount) * 100}%`;
+    fill.style.background = row.color;
+    track.appendChild(fill);
+    const val = document.createElement("div");
+    val.className = "bar-val";
+    val.textContent = `${row.count.toLocaleString()} (${((row.count / total) * 100).toFixed(1)}%)`;
+    div.append(label, track, val);
+    section.appendChild(div);
+  }
+  return section;
+}
+
+$("statsCloseBtn").onclick = () => $("statsDialog").close();
 
 // ============================================================
 // サイドバーのタブ・属性パネル・ダイアログ
