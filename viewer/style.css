@@ -338,6 +338,10 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
   position: absolute; top: 0; bottom: 0; width: 2px;
   background: #ffd166; z-index: 2;
 }
+.sched-delay { color: var(--danger); font-size: 10px; white-space: nowrap; min-width: 58px; }
+.sched-delay.ok { color: #5fd08a; }
+
+.site-warn { color: var(--danger); font-size: 11px; margin-top: 4px; }
 .sched-links {
   display: flex; flex-wrap: wrap; gap: 4px 14px;
   padding: 6px 10px; margin-left: 140px;

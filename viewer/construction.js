@@ -1065,6 +1065,100 @@ function exportZonesGeojson() {
 }
 
 // ============================================================
+// 作図レイヤーのシリアライズ/復元（現場保存用）
+// IDを保持するため、工程とのリンクも現場切替後に維持される
+// ============================================================
+function constructionCartoArray(p) {
+  const c = Cesium.Cartographic.fromCartesian(p);
+  return [Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude), c.height];
+}
+function constructionToCartesian(a) {
+  return Cesium.Cartesian3.fromDegrees(a[0], a[1], a[2] || 0);
+}
+function constructionBumpCounter(id, kind) {
+  const n = parseInt(String(id).split("-")[1], 10);
+  if (!Number.isFinite(n)) return;
+  if (kind === "zone") zoneCounter = Math.max(zoneCounter, n);
+  else if (kind === "crane") craneCounter = Math.max(craneCounter, n);
+  else if (kind === "vehicle") vehicleCounter = Math.max(vehicleCounter, n);
+}
+
+function serializeConstruction() {
+  return {
+    zones: state.layers.filter((l) => l.kind === "zone").map((l) => ({
+      id: l.id,
+      points: l.zone.points.map(constructionCartoArray),
+      type: l.zone.type,
+      label: l.zone.label,
+    })),
+    cranes: state.layers.filter((l) => l.kind === "crane").map((l) => ({
+      id: l.id,
+      position: constructionCartoArray(l.crane.position),
+      boomLength: l.crane.boomLength,
+      boomAngle: l.crane.boomAngle,
+      pivotHeight: l.crane.pivotHeight,
+      preset: l.crane.preset || "custom",
+    })),
+    vehicles: state.layers.filter((l) => l.kind === "vehicle").map((l) => ({
+      id: l.id,
+      points: l.vehicle.points.map(constructionCartoArray),
+      preset: l.vehicle.preset,
+      width: l.vehicle.width,
+      length: l.vehicle.length,
+      turnRadius: l.vehicle.turnRadius,
+    })),
+  };
+}
+
+function restoreConstruction(data) {
+  if (!data) return;
+  for (const z of data.zones || []) {
+    constructionBumpCounter(z.id, "zone");
+    const layer = {
+      id: z.id || `zone-${++zoneCounter}`,
+      dataset: { name: `⬛ ${z.label}`, format: "作図", type: "施工計画", type_en: "zone" },
+      kind: "zone", visible: true, loading: false, entities: [],
+      zone: { points: z.points.map(constructionToCartesian), type: z.type, label: z.label },
+    };
+    state.layers.push(layer);
+    rebuildZone(layer);
+  }
+  for (const c of data.cranes || []) {
+    constructionBumpCounter(c.id, "crane");
+    const layer = {
+      id: c.id || `crane-${++craneCounter}`,
+      dataset: { name: `🏗 クレーン ${(c.id || "").split("-")[1] || ""}`, format: "シミュレーション", type: "施工計画", type_en: "crane" },
+      kind: "crane", visible: true, loading: false, entities: [],
+      crane: {
+        position: constructionToCartesian(c.position),
+        boomLength: c.boomLength, boomAngle: c.boomAngle,
+        pivotHeight: c.pivotHeight || 3, preset: c.preset || "custom",
+        sweepResult: null,
+      },
+    };
+    state.layers.push(layer);
+    redrawCrane(layer);
+  }
+  for (const v of data.vehicles || []) {
+    constructionBumpCounter(v.id, "vehicle");
+    const layer = {
+      id: v.id || `vehicle-${++vehicleCounter}`,
+      dataset: { name: `🚚 車両パス ${(v.id || "").split("-")[1] || ""}`, format: "シミュレーション", type: "施工計画", type_en: "vehicle" },
+      kind: "vehicle", visible: true, loading: false, entities: [],
+      vehicle: {
+        points: v.points.map(constructionToCartesian),
+        preset: v.preset || "custom",
+        width: v.width, length: v.length, turnRadius: v.turnRadius,
+        result: null,
+      },
+    };
+    state.layers.push(layer);
+    rebuildVehiclePath(layer);
+  }
+  renderLayerList();
+}
+
+// ============================================================
 // app.js からの委譲（クリック / Esc）
 // ============================================================
 function constructionHandleClick(windowPos) {

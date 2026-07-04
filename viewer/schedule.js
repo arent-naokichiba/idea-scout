@@ -61,6 +61,22 @@ function schedTaskActive(task, ms) {
   return ms >= s && ms <= e + 86399000;
 }
 
+// 日付基準の予定出来高率（予実比較用）
+function schedPlannedPct(task, ms) {
+  const s = schedParseDate(task.start), e = schedParseDate(task.end);
+  if (s === null || e === null) return 0;
+  const endMs = e + 86399000;
+  if (ms <= s) return 0;
+  if (ms >= endMs) return 100;
+  return ((ms - s) / (endMs - s)) * 100;
+}
+
+// 実績が予定より5ポイント以上遅れていれば遅延とみなす
+function schedTaskDelayed(task, ms = Date.now()) {
+  const planned = schedPlannedPct(task, ms);
+  return planned > 0 && planned - (task.progress || 0) > 5;
+}
+
 // ---------- レイヤー連動 ----------
 function schedSetLayerVisible(layer, visible) {
   if (layer.visible === visible) return;
@@ -241,6 +257,17 @@ function schedRenderTasks() {
     progIn.title = "進捗率(%)";
     progIn.onchange = () => { task.progress = Math.min(100, Math.max(0, parseInt(progIn.value, 10) || 0)); schedMutated(); };
 
+    // 予実比較（今日時点の予定出来高に対する遅れを警告）
+    const delayBadge = document.createElement("span");
+    delayBadge.className = "sched-delay";
+    if (schedTaskDelayed(task)) {
+      delayBadge.textContent = `⚠予定${Math.round(schedPlannedPct(task, Date.now()))}%`;
+      delayBadge.title = `本日時点の予定出来高${Math.round(schedPlannedPct(task, Date.now()))}%に対し実績${task.progress || 0}%（遅延）`;
+    } else if ((task.progress || 0) >= 100) {
+      delayBadge.textContent = "✅";
+      delayBadge.className = "sched-delay ok";
+    }
+
     // ガントバー
     const bar = document.createElement("div");
     bar.className = "sched-bar";
@@ -282,7 +309,7 @@ function schedRenderTasks() {
       schedSetDate(schedule.current);
     };
 
-    row.append(nameIn, startIn, endIn, progIn, bar, linkBtn, delBtn);
+    row.append(nameIn, startIn, endIn, progIn, delayBadge, bar, linkBtn, delBtn);
     box.appendChild(row);
 
     // レイヤーリンク編集

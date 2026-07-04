@@ -75,7 +75,8 @@
     <nav class="tabs">
       <button class="tab active" data-tab="search">検索</button>
       <button class="tab" data-tab="layers">レイヤー <span id="layerCount" class="badge hidden">0</span></button>
-      <button class="tab" data-tab="bookmarks">ブックマーク</button>
+      <button class="tab" data-tab="sites">現場</button>
+      <button class="tab" data-tab="bookmarks">視点</button>
     </nav>
 
     <!-- 検索タブ -->
@@ -137,6 +138,17 @@
         レイヤーがありません。<br>「検索」タブからデータセットを追加してください。
       </div>
       <ul id="layerList" class="layer-list"></ul>
+    </section>
+
+    <!-- 現場タブ（複数現場ダッシュボード） -->
+    <section id="tab-sites" class="tab-body hidden">
+      <button id="siteSaveBtn" class="primary">現在の状態を現場として保存</button>
+      <div class="muted" style="margin-top: 7px; line-height: 1.6;">
+        レイヤー構成・カメラ・作図（ヤード/クレーン/車両パス）・工程を現場単位で保存し、
+        切り替えられます。※BIMモデルとGeoJSON（ファイル由来）は保存対象外
+      </div>
+      <ul id="siteList" class="result-list"></ul>
+      <div id="siteEmpty" class="muted center">保存された現場はありません。</div>
     </section>
 
     <!-- ブックマークタブ -->
@@ -244,5 +256,6 @@
 <script src="app.js"></script>
 <script src="construction.js"></script>
 <script src="schedule.js"></script>
+<script src="sites.js"></script>
 </body>
 </html>
