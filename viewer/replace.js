@@ -108,6 +108,16 @@ function createVolumeLayer(fp, h, sourceId) {
     volume: vol,
     sourceGmlId: sourceId || null,
   };
+  volumeAddEntity(layer);
+  state.layers.push(layer);
+  renderLayerList();
+  requestRender();
+  toast(`計画ボリューム（${vol.width.toFixed(0)}×${vol.depth.toFixed(0)}×${h.toFixed(0)}m）に差し替えました`);
+  return layer;
+}
+
+function volumeAddEntity(layer) {
+  const vol = layer.volume;
   layer.entity = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(vol.lon, vol.lat, vol.baseH + vol.height / 2),
     box: {
@@ -117,10 +127,24 @@ function createVolumeLayer(fp, h, sourceId) {
       outlineColor: Cesium.Color.WHITE.withAlpha(0.6),
     },
   });
+}
+
+// 現場保存・パッケージからの復元（construction.jsのrestoreConstructionから呼ばれる）
+function restoreVolumeLayer(v) {
+  const n = parseInt(String(v.id || "").split("-")[1], 10);
+  if (Number.isFinite(n)) volumeCounter = Math.max(volumeCounter, n);
+  const layer = {
+    id: v.id || `volume-${++volumeCounter}`,
+    dataset: { name: v.name || `⬜ 計画ボリューム ${volumeCounter}`, format: "ボリューム", type: "建替え検討", type_en: "volume" },
+    kind: "volume",
+    visible: true,
+    loading: false,
+    entity: null,
+    volume: { lon: v.lon, lat: v.lat, baseH: v.baseH || 0, width: v.width, depth: v.depth, height: v.height, heading: v.heading || 0 },
+    sourceGmlId: v.sourceGmlId || null,
+  };
+  volumeAddEntity(layer);
   state.layers.push(layer);
-  renderLayerList();
-  requestRender();
-  toast(`計画ボリューム（${vol.width.toFixed(0)}×${vol.depth.toFixed(0)}×${h.toFixed(0)}m）に差し替えました`);
   return layer;
 }
 
@@ -150,6 +174,8 @@ function renderVolumeRows(layer, li) {
   info.textContent = `底面 ${v.width.toFixed(0)}×${v.depth.toFixed(0)}m / 延床概算 ${Math.round(v.width * v.depth * Math.max(1, Math.floor(v.height / 3.1))).toLocaleString()}m²`;
   row.append("高さ(m)", hIn, info);
   li.appendChild(row);
+
+  if (typeof renderShadowRow === "function") renderShadowRow(layer, li);
 }
 
 // CADモデル（glb）差替

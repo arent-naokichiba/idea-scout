@@ -18,15 +18,17 @@ function exportDxf() {
   const zones = state.layers.filter((l) => l.kind === "zone");
   const vehicles = state.layers.filter((l) => l.kind === "vehicle");
   const cranes = state.layers.filter((l) => l.kind === "crane");
+  const volumes = state.layers.filter((l) => l.kind === "volume");
   const records = (typeof recState !== "undefined") ? recState.records : [];
 
   let anchor = null;
   if (zones.length) anchor = zones[0].zone.points[0];
+  else if (volumes.length) anchor = Cesium.Cartesian3.fromDegrees(volumes[0].volume.lon, volumes[0].volume.lat, volumes[0].volume.baseH);
   else if (vehicles.length) anchor = vehicles[0].vehicle.points[0];
   else if (cranes.length) anchor = cranes[0].crane.position;
   else if (records.length) anchor = Cesium.Cartesian3.fromDegrees(records[0].lon, records[0].lat, records[0].height);
   if (!anchor) {
-    toast("書き出す作図要素がありません（ヤード・車両パス・クレーン・記録）");
+    toast("書き出す作図要素がありません（ヤード・車両パス・クレーン・計画ボリューム・記録）");
     return null;
   }
 
@@ -52,6 +54,7 @@ function exportDxf() {
   const layerDefs = [
     ["YARD_MATERIAL", 2], ["YARD_OFFICE", 5], ["YARD_PARKING", 3], ["YARD_GATE", 30],
     ["YARD_DANGER", 1], ["YARD_FENCE", 8], ["VEHICLE_PATH", 4], ["CRANE", 6], ["RECORD", 7], ["TEXT", 7],
+    ["PLAN_BUILDING", 5], ["DIM", 3], ["SYMBOL", 7],
   ];
   w(0, "SECTION"); w(2, "TABLES");
   w(0, "TABLE"); w(2, "LAYER"); w(70, layerDefs.length);
@@ -71,10 +74,16 @@ function exportDxf() {
     }
     w(0, "SEQEND");
   };
-  const text = (layerName, x, y, height, value) => {
+  const text = (layerName, x, y, height, value, angleDeg) => {
     w(0, "TEXT"); w(8, layerName);
     w(10, x.toFixed(3)); w(20, y.toFixed(3)); w(30, 0);
     w(40, height); w(1, dxfEscape(value));
+    if (angleDeg) w(50, angleDeg.toFixed(2));
+  };
+  const line = (layerName, x1, y1, x2, y2) => {
+    w(0, "LINE"); w(8, layerName);
+    w(10, x1.toFixed(3)); w(20, y1.toFixed(3)); w(30, 0);
+    w(11, x2.toFixed(3)); w(21, y2.toFixed(3)); w(31, 0);
   };
   const circle = (layerName, x, y, r) => {
     w(0, "CIRCLE"); w(8, layerName);
@@ -86,34 +95,85 @@ function exportDxf() {
   };
 
   let count = 0;
+  const bbox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  const grow = (pts) => {
+    for (const [x, y] of pts) {
+      bbox.minX = Math.min(bbox.minX, x); bbox.maxX = Math.max(bbox.maxX, x);
+      bbox.minY = Math.min(bbox.minY, y); bbox.maxY = Math.max(bbox.maxY, y);
+    }
+  };
+
   for (const l of zones) {
     const pts = l.zone.points.map(toLocal);
+    grow(pts);
     const layerName = `YARD_${(l.zone.type || "material").toUpperCase()}`;
     polyline(layerName, pts, true);
     const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
     const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
     text("TEXT", cx, cy, 1.2, l.zone.label);
+    // 配置図用: 各辺の寸法（辺の中点に長さを注記）
+    for (let i = 0; i < pts.length; i++) {
+      const [x1, y1] = pts[i];
+      const [x2, y2] = pts[(i + 1) % pts.length];
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      if (len < 0.5) continue;
+      let ang = Cesium.Math.toDegrees(Math.atan2(y2 - y1, x2 - x1));
+      if (ang > 90 || ang < -90) ang += 180; // 文字が逆さにならない向き
+      // 辺の外側法線方向に少しオフセット（重心と反対側）
+      const nx = -(y2 - y1) / len, ny = (x2 - x1) / len;
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+      const outward = ((mx - cx) * nx + (my - cy) * ny) >= 0 ? 1 : -1;
+      text("DIM", mx + nx * outward * 1.2, my + ny * outward * 1.2, 0.9, `${len.toFixed(2)}m`, ang);
+    }
+    count++;
+  }
+  // 配置図用: 計画ボリューム（差替建物）の外形矩形 + 高さ注記
+  for (const l of volumes) {
+    const v = l.volume;
+    const [cx, cy] = toLocal(Cesium.Cartesian3.fromDegrees(v.lon, v.lat, v.baseH));
+    const rect = [
+      [cx - v.width / 2, cy - v.depth / 2], [cx + v.width / 2, cy - v.depth / 2],
+      [cx + v.width / 2, cy + v.depth / 2], [cx - v.width / 2, cy + v.depth / 2],
+    ];
+    grow(rect);
+    polyline("PLAN_BUILDING", rect, true);
+    text("PLAN_BUILDING", cx, cy, 1.4, l.dataset.name.replace(/^⬜\s*/, ""));
+    text("DIM", cx, cy - 2.2, 0.9, `${v.width.toFixed(1)}×${v.depth.toFixed(1)}m H=${v.height.toFixed(1)}m`);
     count++;
   }
   for (const l of vehicles) {
-    polyline("VEHICLE_PATH", l.vehicle.points.map(toLocal), false);
-    const [x, y] = toLocal(l.vehicle.points[0]);
+    const pts = l.vehicle.points.map(toLocal);
+    grow(pts);
+    polyline("VEHICLE_PATH", pts, false);
+    const [x, y] = pts[0];
     text("TEXT", x, y, 1.2, l.dataset.name.replace(/^🚚\s*/, ""));
     count++;
   }
   for (const l of cranes) {
     const [x, y] = toLocal(l.crane.position);
-    circle("CRANE", x, y, craneWorkRadius(l.crane));
+    const r = craneWorkRadius(l.crane);
+    grow([[x - r, y - r], [x + r, y + r]]);
+    circle("CRANE", x, y, r);
     point("CRANE", x, y);
     text("TEXT", x + 1, y + 1, 1.2,
-      `${l.dataset.name.replace(/^🏗\s*/, "")} R=${craneWorkRadius(l.crane).toFixed(1)}m`);
+      `${l.dataset.name.replace(/^🏗\s*/, "")} R=${r.toFixed(1)}m`);
     count++;
   }
   for (const r of records) {
     const [x, y] = toLocal(Cesium.Cartesian3.fromDegrees(r.lon, r.lat, r.height));
+    grow([[x, y]]);
     point("RECORD", x, y);
     text("RECORD", x + 0.5, y + 0.5, 1.0, r.title || "(無題)");
     count++;
+  }
+
+  // 配置図用: 方位記号（図面右上、真北=+Y方向）
+  if (Number.isFinite(bbox.maxX)) {
+    const ax = bbox.maxX + 5, ay = bbox.maxY + 2, len = 5;
+    line("SYMBOL", ax, ay, ax, ay + len);                       // 軸
+    polyline("SYMBOL", [[ax - 0.9, ay + len - 1.8], [ax, ay + len], [ax + 0.9, ay + len - 1.8]], true); // 矢頭
+    circle("SYMBOL", ax, ay + len / 2 - 0.2, len / 2 + 1.4);
+    text("SYMBOL", ax - 0.6, ay + len + 1.0, 1.6, "N");
   }
 
   w(0, "ENDSEC");
@@ -121,7 +181,7 @@ function exportDxf() {
 
   const dxf = lines.join("\r\n") + "\r\n";
   downloadFile(dxf, `plateau-sekou-${exportTimestamp()}.dxf`, "application/dxf");
-  toast(`${count}要素をDXFで書き出しました（基準点のローカル座標・単位m）`);
+  toast(`${count}要素をDXFで書き出しました（寸法・方位付き配置図 / 基準点ローカル座標・単位m）`);
   return dxf;
 }
 

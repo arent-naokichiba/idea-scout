@@ -633,6 +633,11 @@ function renderLayerList() {
       list.appendChild(li);
       continue;
     }
+    if (layer.kind === "kisei") {
+      renderKiseiLayerRows(layer, li);
+      list.appendChild(li);
+      continue;
+    }
     if (layer.kind === "zone") {
       renderZoneRows(layer, li);
       list.appendChild(li);
@@ -1660,8 +1665,9 @@ $("addBookmarkBtn").onclick = () => {
 function serializeState() {
   return {
     camera: getCameraState(),
-    // ファイル・操作由来のレイヤー（GeoJSON/BIMモデル/施工計画/点群）は保存対象外
-    layers: state.layers.filter((l) => !["geojson", "model", "crane", "vehicle", "zone", "points"].includes(l.kind)).map((l) => ({
+    // ファイル・操作由来のレイヤー（GeoJSON/BIMモデル/施工計画/点群/法規面）は保存対象外
+    // （ヤード・ボリューム等はserializeConstruction側で保存される）
+    layers: state.layers.filter((l) => !["geojson", "model", "crane", "vehicle", "zone", "points", "volume", "kisei"].includes(l.kind)).map((l) => ({
       id: l.id,
       visible: l.visible,
       style: l.style,

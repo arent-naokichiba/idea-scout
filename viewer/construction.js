@@ -163,6 +163,8 @@ function renderModelRows(layer, li) {
   };
   row3.appendChild(relocateBtn);
   li.appendChild(row3);
+
+  if (typeof renderShadowRow === "function") renderShadowRow(layer, li);
 }
 
 // ============================================================
@@ -1046,6 +1048,8 @@ function renderZoneRows(layer, li) {
   exportBtn.onclick = exportZonesGeojson;
   row3.append(info, exportBtn);
   li.appendChild(row3);
+
+  if (typeof renderKiseiRow === "function") renderKiseiRow(layer, li);
 }
 
 function exportZonesGeojson() {
@@ -1112,6 +1116,12 @@ function serializeConstruction() {
       length: l.vehicle.length,
       turnRadius: l.vehicle.turnRadius,
     })),
+    volumes: state.layers.filter((l) => l.kind === "volume").map((l) => ({
+      id: l.id,
+      name: l.dataset.name,
+      ...l.volume,
+      sourceGmlId: l.sourceGmlId || null,
+    })),
   };
 }
 
@@ -1159,6 +1169,9 @@ function restoreConstruction(data) {
     };
     state.layers.push(layer);
     rebuildVehiclePath(layer);
+  }
+  for (const v of data.volumes || []) {
+    if (typeof restoreVolumeLayer === "function") restoreVolumeLayer(v);
   }
   renderLayerList();
 }
