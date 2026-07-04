@@ -223,6 +223,8 @@
     <input id="schedUrlIn" type="text" placeholder="https://…/schedule.json（工程管理システムのAPI）">
     <button id="schedUrlBtn" class="tbtn">取得</button>
     <label class="chk"><input id="schedAutoSync" type="checkbox"> 60秒ごと自動更新</label>
+    <button id="schedCsvBtn" class="tbtn" title="Excel・他社工程管理のCSV（名称/開始/終了/進捗列）を取り込み（Shift-JIS対応）">CSV読込</button>
+    <input id="schedCsvFile" type="file" accept=".csv,text/csv" class="hidden">
   </div>
   <input id="schedSlider" type="range" min="0" max="1000" value="0">
   <div id="schedTasks"></div>
@@ -294,11 +296,17 @@
         <button id="docDeleteTemplateBtn" class="tbtn">選択中のカスタムを削除</button>
       </div>
     </div>
-    <div class="rec-heading"><span>🔗 CAD連携エクスポート</span></div>
+    <div class="rec-heading"><span>🔗 外部連携エクスポート / インポート</span></div>
     <div class="rec-row">
-      <button id="dxfBtn" class="tbtn">📐 DXF書き出し（ヤード・車両パス・クレーン・記録）</button>
+      <button id="dxfBtn" class="tbtn">📐 DXF書き出し（CAD）</button>
+      <button id="bcfBtn" class="tbtn" title="現場記録・指摘をBCF 2.1でBIMツール（Revit/Navisworks/Solibri等）へ">🏢 BCF書き出し（BIM指摘連携）</button>
     </div>
-    <div class="muted">AutoCAD / Jw_cad等で開けるDXF(R12)。基準点原点のローカル座標[m]、レイヤー分け済み。</div>
+    <div class="rec-row">
+      <button id="pkgExportBtn" class="tbtn" title="記録（写真・音声・動画含む）・工程・現場・テンプレを1つのZIPに">📦 プロジェクト一式を書き出し</button>
+      <button id="pkgImportBtn" class="tbtn" title="書き出したプロジェクトZIPを読み込み（別PC・別ブラウザへの引っ越し）">📦 読み込み</button>
+      <input id="pkgFile" type="file" accept=".zip,application/zip" class="hidden">
+    </div>
+    <div class="muted">DXF: AutoCAD/Jw_cad等（レイヤー分け・単位m）。BCF: BIM指摘管理の業界標準。パッケージ: PC⇔スマホ・チーム間のデータ移動に。</div>
   </div>
 </dialog>
 
@@ -348,6 +356,7 @@
 <script src="pointcloud.js"></script>
 <script src="report-engine.js"></script>
 <script src="documents.js"></script>
+<script src="zip.js"></script>
 <script src="interop.js"></script>
 </body>
 </html>

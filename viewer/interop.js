@@ -126,3 +126,257 @@ function exportDxf() {
 }
 
 $("dxfBtn").onclick = () => exportDxf();
+
+// ============================================================
+// BCF 2.1 書き出し（現場記録 → Revit/Navisworks/Solibri等のBIMツール）
+// ============================================================
+function xmlEsc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
+}
+
+const BCF_TYPE = { memo: "Comment", issue: "Issue", inspect: "Request", safety: "Issue" };
+const BCF_STATUS = { open: "Active", doing: "InProgress", done: "Closed" };
+
+async function exportBcf() {
+  const records = recState.records;
+  if (records.length === 0) {
+    toast("書き出す記録がありません（📌 記録で作成してください）");
+    return null;
+  }
+  const files = [{
+    name: "bcf.version",
+    data: `<?xml version="1.0" encoding="UTF-8"?>\n<Version VersionId="2.1"><DetailedVersion>2.1</DetailedVersion></Version>`,
+  }];
+
+  // 視点座標は最初の記録を原点としたローカル[m]（X=東, Y=北, Z=上）
+  const origin = Cesium.Cartesian3.fromDegrees(records[0].lon, records[0].lat, records[0].height);
+  const inv = Cesium.Matrix4.inverse(
+    Cesium.Transforms.eastNorthUpToFixedFrame(origin), new Cesium.Matrix4());
+
+  for (const r of records) {
+    const guid = crypto.randomUUID();
+    const vpGuid = crypto.randomUUID();
+    const p = Cesium.Matrix4.multiplyByPoint(inv,
+      Cesium.Cartesian3.fromDegrees(r.lon, r.lat, r.height), new Cesium.Cartesian3());
+    const photo = r.photos[0];
+    const snapExt = photo && photo.blob.type.includes("png") ? "png" : "jpg";
+
+    let markup = `<?xml version="1.0" encoding="UTF-8"?>\n<Markup>\n`;
+    markup += `  <Topic Guid="${guid}" TopicType="${BCF_TYPE[r.type] || "Issue"}" TopicStatus="${BCF_STATUS[r.status] || "Active"}">\n`;
+    markup += `    <Title>${xmlEsc(r.title || "(無題)")}</Title>\n`;
+    markup += `    <CreationDate>${r.createdAt}</CreationDate>\n`;
+    markup += `    <CreationAuthor>PLATEAU Viewer</CreationAuthor>\n`;
+    if (r.note) markup += `    <Description>${xmlEsc(r.note)}</Description>\n`;
+    markup += `  </Topic>\n`;
+    if (r.note) {
+      markup += `  <Comment Guid="${crypto.randomUUID()}">\n`;
+      markup += `    <Date>${r.updatedAt}</Date>\n    <Author>PLATEAU Viewer</Author>\n`;
+      markup += `    <Comment>${xmlEsc(r.note)}</Comment>\n  </Comment>\n`;
+    }
+    markup += `  <Viewpoints Guid="${vpGuid}">\n    <Viewpoint>viewpoint.bcfv</Viewpoint>\n`;
+    if (photo) markup += `    <Snapshot>snapshot.${snapExt}</Snapshot>\n`;
+    markup += `  </Viewpoints>\n</Markup>\n`;
+    files.push({ name: `${guid}/markup.bcf`, data: markup });
+
+    const viewpoint = `<?xml version="1.0" encoding="UTF-8"?>
+<VisualizationInfo Guid="${vpGuid}">
+  <PerspectiveCamera>
+    <CameraViewPoint><X>${p.x.toFixed(3)}</X><Y>${(p.y - 12).toFixed(3)}</Y><Z>${(p.z + 12).toFixed(3)}</Z></CameraViewPoint>
+    <CameraDirection><X>0</X><Y>0.707</Y><Z>-0.707</Z></CameraDirection>
+    <CameraUpVector><X>0</X><Y>0.707</Y><Z>0.707</Z></CameraUpVector>
+    <FieldOfView>60</FieldOfView>
+  </PerspectiveCamera>
+</VisualizationInfo>\n`;
+    files.push({ name: `${guid}/viewpoint.bcfv`, data: viewpoint });
+    if (photo) files.push({ name: `${guid}/snapshot.${snapExt}`, data: photo.blob });
+  }
+
+  const blob = await MiniZip.create(files);
+  downloadFile(blob, `plateau-issues-${exportTimestamp()}.bcf`, "application/octet-stream");
+  toast(`${records.length}件の記録をBCF 2.1で書き出しました（BIMツールの指摘管理に読み込めます）`);
+  return blob;
+}
+$("bcfBtn").onclick = () => exportBcf();
+
+// ============================================================
+// プロジェクトパッケージ（一式の書き出し / 読み込み）
+// ============================================================
+async function exportPackage() {
+  toast("プロジェクト一式を書き出しています...");
+  const files = [
+    { name: "manifest.json", data: JSON.stringify({ app: "plateau-viewer", format: 1, exportedAt: new Date().toISOString() }, null, 1) },
+    { name: "state.json", data: JSON.stringify(serializeState(), null, 1) },
+    { name: "construction.json", data: JSON.stringify(serializeConstruction(), null, 1) },
+    { name: "schedule.json", data: JSON.stringify(schedSerialize(), null, 1) },
+    { name: "sites.json", data: JSON.stringify(sitesLoad(), null, 1) },
+    { name: "templates.json", data: JSON.stringify(docUserTemplates(), null, 1) },
+    { name: "bookmarks.json", data: localStorage.getItem(BOOKMARK_KEY) || "[]" },
+  ];
+  const recMeta = [];
+  for (const r of recState.records) {
+    const meta = { ...r, photos: [], audios: [], videos: [] };
+    for (const [kind, arr] of [["photos", r.photos], ["audios", r.audios], ["videos", r.videos]]) {
+      for (const m of arr) {
+        const ext = ((m.blob.type.split("/")[1] || "bin").split(";")[0]) || "bin";
+        const path = `media/${r.id}/${m.id}.${ext}`;
+        files.push({ name: path, data: m.blob });
+        meta[kind].push({ id: m.id, name: m.name, ts: m.ts, path, mime: m.blob.type });
+      }
+    }
+    recMeta.push(meta);
+  }
+  files.push({ name: "records.json", data: JSON.stringify(recMeta, null, 1) });
+  const blob = await MiniZip.create(files);
+  downloadFile(blob, `plateau-project-${exportTimestamp()}.zip`, "application/zip");
+  toast(`プロジェクト一式を書き出しました（記録${recMeta.length}件・${(blob.size / 1024 / 1024).toFixed(1)}MB）`);
+  return blob;
+}
+$("pkgExportBtn").onclick = () => exportPackage();
+
+async function importPackage(file) {
+  let entries;
+  try {
+    entries = MiniZip.read(await file.arrayBuffer());
+  } catch (e) {
+    toast("読み込めません: " + e.message);
+    return;
+  }
+  const decoder = new TextDecoder();
+  const json = (n) => (entries.has(n) ? JSON.parse(decoder.decode(entries.get(n))) : null);
+  const manifest = json("manifest.json");
+  if (!manifest || manifest.app !== "plateau-viewer") {
+    toast("PLATEAU Viewerのプロジェクトパッケージではありません");
+    return;
+  }
+  toast("プロジェクトを読み込んでいます...");
+
+  // 現在のレイヤー・記録ピンを撤去
+  for (const layer of [...state.layers]) removeLayer(layer);
+  for (const [, pin] of recState.pins) viewer.entities.remove(pin);
+  recState.pins.clear();
+
+  // localStorage系（現場・テンプレ・ブックマーク）
+  const sites = json("sites.json");
+  if (sites) localStorage.setItem(SITES_STORAGE_KEY, JSON.stringify(sites));
+  const templates = json("templates.json");
+  if (templates) localStorage.setItem(DOC_TEMPLATES_KEY, JSON.stringify(templates));
+  if (entries.has("bookmarks.json")) {
+    localStorage.setItem(BOOKMARK_KEY, decoder.decode(entries.get("bookmarks.json")));
+  }
+  renderSites();
+  renderBookmarks();
+
+  // 記録（メディア復元 → IndexedDBへ）
+  const recMeta = json("records.json") || [];
+  const oldIds = recState.records.map((r) => r.id);
+  for (const id of oldIds) await recordsDelete(id);
+  recState.records = [];
+  for (const meta of recMeta) {
+    const record = { ...meta, photos: [], audios: [], videos: [] };
+    for (const kind of ["photos", "audios", "videos"]) {
+      for (const m of meta[kind] || []) {
+        const bytes = entries.get(m.path);
+        if (!bytes) continue;
+        record[kind].push({ id: m.id, name: m.name, ts: m.ts, blob: new Blob([bytes], { type: m.mime }) });
+      }
+    }
+    recState.records.push(record);
+    await recordsPut(record);
+    recordRenderPin(record);
+  }
+  renderRecordList();
+
+  // レイヤー・作図・工程をライブ適用
+  const viewerState = json("state.json");
+  if (viewerState) await restoreState(viewerState, false);
+  restoreConstruction(json("construction.json"));
+  schedLoad(json("schedule.json") || { version: 1, tasks: [] }, { announce: false });
+
+  toast(`プロジェクトを読み込みました（記録${recMeta.length}件）`);
+}
+$("pkgImportBtn").onclick = () => $("pkgFile").click();
+$("pkgFile").onchange = (e) => {
+  if (e.target.files[0]) importPackage(e.target.files[0]);
+  e.target.value = "";
+};
+
+// ============================================================
+// 工程CSVインポート（Excel・他社工程管理からの取り込み / Shift-JIS対応）
+// ============================================================
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = "", inQuote = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuote) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuote = false;
+      } else field += c;
+    } else if (c === '"') inQuote = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      if (row.some((f) => f !== "")) rows.push(row);
+      row = [];
+    } else field += c;
+  }
+  row.push(field);
+  if (row.some((f) => f !== "")) rows.push(row);
+  return rows;
+}
+
+function csvFindCol(header, keywords) {
+  return header.findIndex((h) => keywords.some((k) => String(h).includes(k)));
+}
+
+function csvNormalizeDate(s) {
+  const t = Date.parse(String(s).trim().replace(/\./g, "/"));
+  return Number.isFinite(t) ? schedFormat(t) : null;
+}
+
+async function importScheduleCsv(file) {
+  const buf = await file.arrayBuffer();
+  let text = new TextDecoder("utf-8").decode(buf);
+  if (text.includes("�")) text = new TextDecoder("shift-jis").decode(buf); // Excel既定のSJIS
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+  const rows = parseCsv(text);
+  if (rows.length < 2) {
+    toast("CSVにデータ行がありません");
+    return;
+  }
+  const header = rows[0];
+  const nameCol = csvFindCol(header, ["名称", "工程", "タスク", "作業", "name"]);
+  const startCol = csvFindCol(header, ["開始", "着手", "start"]);
+  const endCol = csvFindCol(header, ["終了", "完了", "end", "finish"]);
+  const progCol = csvFindCol(header, ["進捗", "出来高", "progress", "%"]);
+  if (nameCol < 0 || startCol < 0 || endCol < 0) {
+    toast("ヘッダーに 名称/開始/終了 に相当する列が見つかりません");
+    return;
+  }
+  let added = 0;
+  for (const row of rows.slice(1)) {
+    const start = csvNormalizeDate(row[startCol]);
+    const end = csvNormalizeDate(row[endCol]);
+    if (!row[nameCol] || !start || !end) continue;
+    schedule.tasks.push({
+      id: `csv-${Date.now().toString(36)}-${added}`,
+      name: String(row[nameCol]).trim(),
+      start, end,
+      progress: progCol >= 0 ? Math.min(100, Math.max(0, parseFloat(row[progCol]) || 0)) : 0,
+      layers: [],
+    });
+    added++;
+  }
+  schedMutated();
+  schedSetDate(schedule.current);
+  toast(`CSVから${added}件の工程を取り込みました`);
+}
+$("schedCsvBtn").onclick = () => $("schedCsvFile").click();
+$("schedCsvFile").onchange = (e) => {
+  if (e.target.files[0]) importScheduleCsv(e.target.files[0]);
+  e.target.value = "";
+};
