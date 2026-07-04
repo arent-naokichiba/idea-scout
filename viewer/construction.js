@@ -48,17 +48,22 @@ function placeModelAt(windowPos) {
   const pending = modelPlaceState.pending;
   modelPlaceState.pending = null;
   hideHint();
+  createModelLayerAt(pos, pending.name, pending.url);
+  toast(`配置しました: ${pending.name}（レイヤータブで向き・高さを調整できます）`);
+}
 
-  const carto = Cesium.Cartographic.fromCartesian(pos);
+// BIMモデルレイヤーを指定位置に生成する（配置フロー・建物差し替えの両方から使用）
+function createModelLayerAt(position, name, url) {
+  const carto = Cesium.Cartographic.fromCartesian(position);
   const layer = {
     id: `model-${++modelCounter}`,
-    dataset: { name: `🏗 ${pending.name}`, format: "glTF", type: "BIMモデル", type_en: "model" },
+    dataset: { name: `🏗 ${name}`, format: "glTF", type: "BIMモデル", type_en: "model" },
     kind: "model",
     visible: true,
     loading: false,
     entity: null,
     model: {
-      url: pending.url,
+      url,
       lon: Cesium.Math.toDegrees(carto.longitude),
       lat: Cesium.Math.toDegrees(carto.latitude),
       baseHeight: carto.height,
@@ -69,13 +74,13 @@ function placeModelAt(windowPos) {
   };
   layer.entity = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(layer.model.lon, layer.model.lat, layer.model.baseHeight),
-    model: { uri: pending.url, scale: 1 },
+    model: { uri: url, scale: 1 },
   });
   updateModelEntity(layer);
   state.layers.push(layer);
   renderLayerList();
-  toast(`配置しました: ${pending.name}（レイヤータブで向き・高さを調整できます）`);
   requestRender();
+  return layer;
 }
 
 function updateModelEntity(layer) {

@@ -478,14 +478,19 @@ function applyLayerStyle(layer) {
   clearSelection();
 
   const alpha = layer.opacity;
-  let showExpr = null;
+  const showConds = [];
   if (layer.heightProp && layer.heightFilter) {
     const p = `Number(\${feature['${layer.heightProp}']})`;
-    const conds = [];
-    if (layer.heightFilter.min != null) conds.push(`${p} >= ${layer.heightFilter.min}`);
-    if (layer.heightFilter.max != null) conds.push(`${p} <= ${layer.heightFilter.max}`);
-    if (conds.length) showExpr = conds.join(" && ");
+    if (layer.heightFilter.min != null) showConds.push(`${p} >= ${layer.heightFilter.min}`);
+    if (layer.heightFilter.max != null) showConds.push(`${p} <= ${layer.heightFilter.max}`);
   }
+  // 差し替え・解体表現で非表示にした建物（gml_id単位）
+  if (layer.hiddenIds && layer.hiddenIds.length > 0) {
+    for (const id of layer.hiddenIds) {
+      showConds.push(`\${gml_id} !== '${String(id).replace(/'/g, "")}'`);
+    }
+  }
+  const showExpr = showConds.length > 0 ? showConds.join(" && ") : null;
 
   let styleDef = null;
   if (layer.style === "white") {
@@ -623,6 +628,11 @@ function renderLayerList() {
       list.appendChild(li);
       continue;
     }
+    if (layer.kind === "volume") {
+      renderVolumeRows(layer, li);
+      list.appendChild(li);
+      continue;
+    }
     if (layer.kind === "zone") {
       renderZoneRows(layer, li);
       list.appendChild(li);
@@ -714,6 +724,9 @@ function renderLayerList() {
       fRow.append("高さ(m)", minIn, "〜", maxIn);
       li.appendChild(fRow);
     }
+
+    // 差し替えで非表示にした建物の解除UI（replace.js）
+    if (typeof renderHiddenRow === "function") renderHiddenRow(layer, li);
 
     list.appendChild(li);
   }
@@ -985,6 +998,10 @@ pickHandler.setInputAction((movement) => {
     placePointCloudAt(movement.position);
     return;
   }
+  if (typeof sitecheckState !== "undefined" && sitecheckState.arming) {
+    runSiteCheckAt(movement.position);
+    return;
+  }
   if (clipState.arming) {
     clipAddPoint(movement.position);
     return;
@@ -1044,11 +1061,14 @@ function showAttributes(feature) {
     attrs[key] = value;
   }
   showRawAttributes(attrs, "地物の属性");
+  // 建物差し替えアクション（replace.js）
+  if (typeof replaceSetTarget === "function") replaceSetTarget(feature, attrs);
 }
 
 function showRawAttributes(attrs, title) {
   currentAttrs = attrs;
   $("attrTitle").textContent = title || "地物の属性";
+  $("attrActions").innerHTML = "";
   renderAttributes();
   $("attrPanel").classList.remove("hidden");
 }
@@ -1479,6 +1499,12 @@ document.addEventListener("keydown", (e) => {
       hideHint();
       return;
     }
+    if (typeof sitecheckState !== "undefined" && sitecheckState.arming) {
+      sitecheckState.arming = false;
+      $("sitecheckBtn").classList.remove("active");
+      hideHint();
+      return;
+    }
     if (walkState.active || walkState.arming) exitWalk();
     else if (measureState.active) stopMeasure(false);
     else if (sightState.arming || sightState.entities.length > 0) clearSight();
@@ -1641,6 +1667,7 @@ function serializeState() {
       style: l.style,
       opacity: l.opacity,
       heightFilter: l.heightFilter,
+      hiddenIds: l.hiddenIds,
       split: l.split,
     })),
     basemap: state.basemap,
@@ -1676,8 +1703,9 @@ async function restoreState(saved, fly) {
       });
       if (!layer) continue;
       if (ls.split) layer.split = ls.split;
-      if (ls.heightFilter) {
-        layer.heightFilter = ls.heightFilter;
+      if (ls.hiddenIds && ls.hiddenIds.length > 0) layer.hiddenIds = ls.hiddenIds;
+      if (ls.heightFilter || (ls.hiddenIds && ls.hiddenIds.length > 0)) {
+        layer.heightFilter = ls.heightFilter || null;
         applyLayerStyle(layer);
       }
     }

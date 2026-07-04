@@ -129,6 +129,14 @@ async function buildDocContext(recordId) {
     })),
     surveyCount: (lastSurveyRows || []).length,
     layers: state.layers.map((l) => l.dataset.name),
+    // 敷地条件調査（sitecheck.js実行後に利用可能）
+    sitecheck: (typeof lastSiteCheck !== "undefined" && lastSiteCheck) ? {
+      ...lastSiteCheck,
+      calcSiteArea: lastSiteCheck.calc ? `${lastSiteCheck.calc.siteArea.toLocaleString()} m²` : "-",
+      calcFootprint: lastSiteCheck.calc ? `${lastSiteCheck.calc.maxFootprint.toLocaleString()} m²（建蔽率 ${lastSiteCheck.calc.coverage}%）` : "-",
+      calcGfa: lastSiteCheck.calc ? `${lastSiteCheck.calc.maxGfa.toLocaleString()} m²（容積率 ${lastSiteCheck.calc.far}%）` : "-",
+      calcFloors: lastSiteCheck.calc ? `約 ${lastSiteCheck.calc.refFloors} 階（容積率÷建蔽率）` : "-",
+    } : null,
   };
 }
 

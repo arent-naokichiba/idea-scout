@@ -57,6 +57,7 @@
     <button id="sightBtn" class="tbtn" title="視線解析（視点→対象の2点をクリックして見通しを判定）">👁 視線</button>
     <button id="craneBtn" class="tbtn" title="クレーン配置（設置地点をクリック→ブーム長・起伏角を設定して干渉チェック）">🏗 クレーン</button>
     <button id="surveyBtn" class="tbtn" title="近隣調査（中心地点をクリック→半径内の建物を抽出してリスト化）">📋 調査</button>
+    <button id="sitecheckBtn" class="tbtn" title="敷地条件調査（地点クリック→用途地域・建蔽率・容積率・防火・高度地区を自動判定してボリューム試算）">🧾 敷地</button>
     <button id="vehicleBtn" class="tbtn" title="車両走行パス（ルートをクリックで描く→車種の最小回転半径で旋回可否を判定）">🚚 車両</button>
     <button id="zoneBtn" class="tbtn" title="ヤード作図（資材置き場・仮設事務所・仮囲い等の範囲をポリゴンで作図）">⬛ ヤード</button>
     <button id="scheduleBtn" class="tbtn" title="工程管理（工程にレイヤーを紐づけて日付連動で現場配置を再現）">📅 工程</button>
@@ -195,6 +196,7 @@
         <button id="attrCloseBtn" class="tbtn">✕</button>
       </div>
     </div>
+    <div id="attrActions" class="attr-actions"></div>
     <input id="attrFilter" type="text" placeholder="属性名で絞り込み">
     <div id="attrBody"></div>
   </aside>
@@ -317,6 +319,16 @@
 </dialog>
 <input id="recPhotoFile" type="file" accept="image/*" capture="environment" multiple class="hidden">
 <input id="recVideoFile" type="file" accept="video/*" capture="environment" class="hidden">
+<input id="replGlbFile" type="file" accept=".glb,.gltf,model/gltf-binary" class="hidden">
+
+<!-- 敷地条件調査ダイアログ -->
+<dialog id="sitecheckDialog">
+  <div class="panel-head"><span id="sitecheckTitle"></span><button id="sitecheckCloseBtn" class="tbtn">✕</button></div>
+  <div id="sitecheckBody"></div>
+  <div class="dialog-actions">
+    <button id="sitecheckDocBtn" class="tbtn">🖨 敷地条件調査書を出力（印刷/PDF）</button>
+  </div>
+</dialog>
 
 <!-- 写真マークアップダイアログ -->
 <dialog id="markupDialog">
@@ -358,5 +370,7 @@
 <script src="documents.js"></script>
 <script src="zip.js"></script>
 <script src="interop.js"></script>
+<script src="replace.js"></script>
+<script src="sitecheck.js"></script>
 </body>
 </html>
