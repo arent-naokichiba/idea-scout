@@ -437,3 +437,7 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* 天空率比較ダイアログ */
+.tenku-wrap { display: flex; gap: 16px; justify-content: center; padding: 8px 0; flex-wrap: wrap; }
+.tenku-wrap canvas { background: #171b22; border-radius: 8px; }

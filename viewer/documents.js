@@ -74,6 +74,42 @@ const DOC_BUILTIN_TEMPLATES = [
       { type: "text", label: "備考", text: "" },
     ],
   },
+  {
+    id: "gaiyou",
+    requires: null,
+    name: "建築計画概要書（参考）",
+    blocks: [
+      { type: "title", text: "建 築 計 画 概 要 書", subtitle: "（本ツールによる参考資料）" },
+      { type: "meta-table", title: "第一面（申請者等）", rows: [
+        ["建築主", ""], ["代理者（設計者）", ""], ["工事施工者", ""],
+        ["工事名", "{project}"], ["作成日", "{now}"],
+      ]},
+      { type: "meta-table", title: "第二面（敷地）", rows: [
+        ["敷地の所在地", "{sitecheck.placeName}"],
+        ["座標", "北緯 {sitecheck.lat} / 東経 {sitecheck.lon}"],
+        ["用途地域", "{sitecheck.useDistrict}"],
+        ["防火地域等", "{sitecheck.fire}"],
+        ["敷地面積", "{sitecheck.calcSiteArea}"],
+        ["最大建築面積", "{sitecheck.calcFootprint}"],
+        ["最大延床面積", "{sitecheck.calcGfa}"],
+      ]},
+      { type: "meta-table", title: "第三面（建築物の概要）", rows: [
+        ["主要用途", ""], ["構造", ""],
+        ["建築面積", "{plan.footprint}"],
+        ["延べ面積（概算）", "{plan.gfa}"],
+        ["高さ", "{plan.height}"],
+        ["階数（概算）", "{plan.floors}"],
+      ]},
+      { type: "meta-table", title: "法規チェック（本ツール参考判定）", rows: [
+        ["斜線制限", "{plan.kisei}"],
+        ["天空率（簡易比較）", "{plan.tenku}"],
+        ["日影（冬至・等時間）", "{plan.hikage}"],
+      ]},
+      { type: "screenshot", caption: "配置図（現況3Dビュー）" },
+      { type: "text", label: "備考",
+        text: "本書はPLATEAU配信データと本ツールの簡易判定（外接矩形近似・緩和規定未考慮）による参考資料であり、確認申請の添付書類ではありません。申請にあたっては設計者による正式な法規検討と行政窓口での確認を要します。" },
+    ],
+  },
 ];
 
 function docUserTemplates() {
@@ -132,12 +168,49 @@ async function buildDocContext(recordId) {
     // 敷地条件調査（sitecheck.js実行後に利用可能）
     sitecheck: (typeof lastSiteCheck !== "undefined" && lastSiteCheck) ? {
       ...lastSiteCheck,
+      fire: lastSiteCheck.rows.find((r) => r.item.includes("防火"))?.value || "-",
       calcSiteArea: lastSiteCheck.calc ? `${lastSiteCheck.calc.siteArea.toLocaleString()} m²` : "-",
       calcFootprint: lastSiteCheck.calc ? `${lastSiteCheck.calc.maxFootprint.toLocaleString()} m²（建蔽率 ${lastSiteCheck.calc.coverage}%）` : "-",
       calcGfa: lastSiteCheck.calc ? `${lastSiteCheck.calc.maxGfa.toLocaleString()} m²（容積率 ${lastSiteCheck.calc.far}%）` : "-",
       calcFloors: lastSiteCheck.calc ? `約 ${lastSiteCheck.calc.refFloors} 階（容積率÷建蔽率）` : "-",
     } : null,
+    // 計画建物と法規チェック結果（建築計画概要書用）
+    plan: docPlanContext(),
   };
+}
+
+// 計画ボリューム/CADモデルと法規チェック（kisei.js）の結果を帳票向け文字列に整形
+function docPlanContext() {
+  const vol = state.layers.find((l) => l.kind === "volume");
+  const model = state.layers.find((l) => l.kind === "model");
+  let footprint = "-", gfa = "-", height = "-", floors = "-";
+  if (vol) {
+    const v = vol.volume;
+    const fa = v.width * v.depth;
+    const fl = Math.max(1, Math.floor(v.height / 3.1));
+    footprint = `${Math.round(fa).toLocaleString()} m²（${v.width.toFixed(1)}×${v.depth.toFixed(1)}m）`;
+    gfa = `約 ${Math.round(fa * fl).toLocaleString()} m²`;
+    height = `${v.height.toFixed(1)} m`;
+    floors = `約 ${fl} 階`;
+  } else if (model) {
+    footprint = "（CADモデル配置）";
+    height = `${((model.model.buildHeight || 30) + (model.model.heightOffset || 0)).toFixed(1)} m`;
+  }
+  let kisei = "未実施";
+  const verdicts = state.layers.filter((l) => l.kind === "kisei").flatMap((l) => l.kisei.verdicts);
+  if (verdicts.length) {
+    const ng = verdicts.filter((v) => !v.ok);
+    kisei = ng.length === 0
+      ? `適合（${verdicts.length}件判定 / 外接矩形近似）`
+      : `超過あり: ${ng.map((v) => `${v.name} +${v.over.toFixed(1)}m`).join(" / ")}`;
+  }
+  const tenku = (typeof lastTenku !== "undefined" && lastTenku)
+    ? `計画 ${lastTenku.plan.toFixed(1)}% / 斜線適合建物 ${lastTenku.comp.toFixed(1)}% → ${lastTenku.ok ? "適合建物以上（緩和の可能性あり）" : "適合建物未満"}`
+    : "未実施";
+  const hikage = (typeof lastHikage !== "undefined" && lastHikage)
+    ? `5-10m帯 最大${lastHikage.max5.toFixed(1)}h（規制${lastHikage.regA}h）/ 10m超 最大${lastHikage.max10.toFixed(1)}h（規制${lastHikage.regB}h）→ ${lastHikage.ok ? "規制内" : "超過"}（測定面GL+${lastHikage.planeH}m）`
+    : "未実施";
+  return { footprint, gfa, height, floors, kisei, tenku, hikage };
 }
 
 // ---------- UI ----------
