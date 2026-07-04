@@ -342,6 +342,31 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 .sched-delay.ok { color: #5fd08a; }
 
 .site-warn { color: var(--danger); font-size: 11px; margin-top: 4px; }
+
+/* ---------- 現場記録 ---------- */
+#recordDialog { width: 640px; }
+#recordBody { padding: 10px 14px; max-height: 72vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.rec-title { width: 100%; padding: 7px 10px; font-size: 14px;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.rec-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rec-note { width: 100%; min-height: 64px; padding: 7px 10px; resize: vertical;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--fg);
+  font-family: inherit; font-size: 13px; }
+.rec-heading { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 12px;
+  margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.rec-photos { display: flex; gap: 8px; flex-wrap: wrap; }
+.rec-photo { width: 168px; background: var(--bg3); border-radius: 8px; overflow: hidden; }
+.rec-photo img { width: 100%; height: 110px; object-fit: cover; display: block; }
+.rec-photoBar { display: flex; gap: 2px; padding: 3px; }
+.rec-photoBar .tbtn { padding: 3px 6px; font-size: 10px; flex: 1; }
+.rec-media { display: flex; flex-direction: column; gap: 6px; }
+.rec-mediaItem { display: flex; align-items: center; gap: 6px; }
+.rec-mediaItem audio { flex: 1; height: 34px; }
+.rec-video { max-width: 100%; width: 320px; border-radius: 8px; background: #000; }
+
+#markupDialog { width: auto; max-width: 96vw; }
+#markupCanvas { display: block; max-width: 92vw; max-height: 72vh; margin: 10px auto;
+  border-radius: 6px; touch-action: none; cursor: crosshair; }
 .sched-links {
   display: flex; flex-wrap: wrap; gap: 4px 14px;
   padding: 6px 10px; margin-left: 140px;

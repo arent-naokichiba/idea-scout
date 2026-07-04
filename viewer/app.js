@@ -345,9 +345,13 @@ async function addGeojsonLayer(name, geojson) {
 
 function importGeojsonFiles(files) {
   for (const file of files) {
-    // glTF/GLBはBIMモデルとして配置モードへ
+    // glTF/GLBはBIMモデル、PLYは点群として配置モードへ
     if (/\.(glb|gltf)$/i.test(file.name)) {
       handleModelFile(file);
+      continue;
+    }
+    if (/\.ply$/i.test(file.name)) {
+      handlePlyFile(file);
       continue;
     }
     const reader = new FileReader();
@@ -445,6 +449,8 @@ function removeLayer(layer) {
   if (layer.dataSource) viewer.dataSources.remove(layer.dataSource, true);
   if (layer.entity) viewer.entities.remove(layer.entity);
   if (layer.entities) for (const e of layer.entities) viewer.entities.remove(e);
+  if (layer.collection) viewer.scene.primitives.remove(layer.collection);
+  if (layer.diffEntity) viewer.entities.remove(layer.diffEntity);
   if (layer.model && layer.model.url) URL.revokeObjectURL(layer.model.url);
   state.layers = state.layers.filter((l) => l !== layer);
   clearSelection();
@@ -531,6 +537,7 @@ function renderLayerList() {
       if (layer.dataSource) layer.dataSource.show = layer.visible;
       if (layer.entity) layer.entity.show = layer.visible;
       if (layer.entities) for (const e of layer.entities) e.show = layer.visible;
+      if (layer.collection) layer.collection.show = layer.visible;
       renderLayerList();
       saveState();
       requestRender();
@@ -543,6 +550,7 @@ function renderLayerList() {
 
     const zoomBtn = iconBtn("🎯", "このレイヤーに移動", () => {
       if (layer.tileset) viewer.flyTo(layer.tileset, { duration: 1.2 });
+      else if (layer.collection) viewer.flyTo(layer.collection, { duration: 1.2 }).catch(() => {});
       else if (layer.dataSource) viewer.flyTo(layer.dataSource, { duration: 1.2 });
       else if (layer.entity) viewer.flyTo(layer.entity, { duration: 1.2 });
       else if (layer.entities && layer.entities.length) viewer.flyTo(layer.entities, { duration: 1.2 });
@@ -607,6 +615,11 @@ function renderLayerList() {
     }
     if (layer.kind === "vehicle") {
       renderVehicleRows(layer, li);
+      list.appendChild(li);
+      continue;
+    }
+    if (layer.kind === "points") {
+      renderPointsRows(layer, li);
       list.appendChild(li);
       continue;
     }
@@ -963,6 +976,15 @@ pickHandler.setInputAction((movement) => {
   if (typeof constructionHandleClick === "function" && constructionHandleClick(movement.position)) {
     return;
   }
+  // 現場記録ピンの追加 / 点群の配置
+  if (typeof recState !== "undefined" && recState.arming) {
+    recordAddAt(movement.position);
+    return;
+  }
+  if (typeof pcPlaceState !== "undefined" && pcPlaceState.pending) {
+    placePointCloudAt(movement.position);
+    return;
+  }
   if (clipState.arming) {
     clipAddPoint(movement.position);
     return;
@@ -978,6 +1000,12 @@ pickHandler.setInputAction((movement) => {
     selectedOriginalColor = Cesium.Color.clone(picked.color);
     picked.color = Cesium.Color.fromCssColorString("#ffd166");
     showAttributes(picked);
+    requestRender();
+    return;
+  }
+  // 現場記録のピン
+  if (picked && picked.id instanceof Cesium.Entity &&
+      typeof recordHandlePick === "function" && recordHandlePick(picked)) {
     requestRender();
     return;
   }
@@ -1440,6 +1468,17 @@ function exitWalk() {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (typeof constructionHandleEscape === "function" && constructionHandleEscape()) return;
+    if (typeof recState !== "undefined" && recState.arming) {
+      recState.arming = false;
+      $("recordBtn").classList.remove("active");
+      hideHint();
+      return;
+    }
+    if (typeof pcPlaceState !== "undefined" && pcPlaceState.pending) {
+      pcPlaceState.pending = null;
+      hideHint();
+      return;
+    }
     if (walkState.active || walkState.arming) exitWalk();
     else if (measureState.active) stopMeasure(false);
     else if (sightState.arming || sightState.entities.length > 0) clearSight();
@@ -1595,8 +1634,8 @@ $("addBookmarkBtn").onclick = () => {
 function serializeState() {
   return {
     camera: getCameraState(),
-    // ファイル・操作由来のレイヤー（GeoJSON/BIMモデル/施工計画）は保存対象外
-    layers: state.layers.filter((l) => !["geojson", "model", "crane", "vehicle", "zone"].includes(l.kind)).map((l) => ({
+    // ファイル・操作由来のレイヤー（GeoJSON/BIMモデル/施工計画/点群）は保存対象外
+    layers: state.layers.filter((l) => !["geojson", "model", "crane", "vehicle", "zone", "points"].includes(l.kind)).map((l) => ({
       id: l.id,
       visible: l.visible,
       style: l.style,

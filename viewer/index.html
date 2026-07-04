@@ -60,6 +60,7 @@
     <button id="vehicleBtn" class="tbtn" title="車両走行パス（ルートをクリックで描く→車種の最小回転半径で旋回可否を判定）">🚚 車両</button>
     <button id="zoneBtn" class="tbtn" title="ヤード作図（資材置き場・仮設事務所・仮囲い等の範囲をポリゴンで作図）">⬛ ヤード</button>
     <button id="scheduleBtn" class="tbtn" title="工程管理（工程にレイヤーを紐づけて日付連動で現場配置を再現）">📅 工程</button>
+    <button id="recordBtn" class="tbtn" title="現場記録（地点をクリックして野帳メモ・写真・音声・動画を残す）">📌 記録</button>
     <button id="reportBtn" class="tbtn" title="現在の表示と統計をHTMLレポートとして保存">📄 レポート</button>
     <button id="screenshotBtn" class="tbtn" title="スクリーンショットを保存">📷</button>
     <button id="shareBtn" class="tbtn" title="現在の表示状態のURLをコピー">🔗 共有</button>
@@ -76,6 +77,7 @@
       <button class="tab active" data-tab="search">検索</button>
       <button class="tab" data-tab="layers">レイヤー <span id="layerCount" class="badge hidden">0</span></button>
       <button class="tab" data-tab="sites">現場</button>
+      <button class="tab" data-tab="records">記録</button>
       <button class="tab" data-tab="bookmarks">視点</button>
     </nav>
 
@@ -126,9 +128,9 @@
       <ul id="searchResults" class="result-list"></ul>
 
       <div class="import-box">
-        <div class="qs-title">インポート — GeoJSON（敷地境界等） / glTF・GLB（BIMモデル）</div>
+        <div class="qs-title">インポート — GeoJSON / glTF・GLB（BIM） / PLY（点群）</div>
         <button id="importBtn" class="tbtn">ファイルを選択（マップへのドロップも可）</button>
-        <input id="importFile" type="file" accept=".geojson,.json,.glb,.gltf,application/geo+json,model/gltf-binary" multiple class="hidden">
+        <input id="importFile" type="file" accept=".geojson,.json,.glb,.gltf,.ply,application/geo+json,model/gltf-binary" multiple class="hidden">
       </div>
     </section>
 
@@ -149,6 +151,22 @@
       </div>
       <ul id="siteList" class="result-list"></ul>
       <div id="siteEmpty" class="muted center">保存された現場はありません。</div>
+    </section>
+
+    <!-- 記録タブ（野帳・指摘管理） -->
+    <section id="tab-records" class="tab-body hidden">
+      <div class="row" style="display:flex; gap:6px;">
+        <select id="recordFilter" style="flex:1;">
+          <option value="all">すべて</option>
+          <option value="open">未対応</option>
+          <option value="doing">対応中</option>
+          <option value="done">完了</option>
+        </select>
+        <button id="recordCsvBtn" class="tbtn" title="記録一覧をCSVで保存">CSV</button>
+      </div>
+      <div class="muted" style="margin-top:6px;">ツールバーの「📌 記録」→地点クリックで追加。写真・音声・動画はこのブラウザ内（IndexedDB）に保存されます。</div>
+      <ul id="recordList" class="result-list"></ul>
+      <div id="recordEmpty" class="muted center">記録はありません。</div>
     </section>
 
     <!-- ブックマークタブ -->
@@ -247,6 +265,38 @@
   </div>
 </dialog>
 
+<!-- 現場記録ダイアログ -->
+<dialog id="recordDialog">
+  <div class="panel-head"><span id="recordTitleHead">現場記録</span><button id="recordCloseBtn" class="tbtn">✕</button></div>
+  <div id="recordBody"></div>
+</dialog>
+<input id="recPhotoFile" type="file" accept="image/*" capture="environment" multiple class="hidden">
+<input id="recVideoFile" type="file" accept="video/*" capture="environment" class="hidden">
+
+<!-- 写真マークアップダイアログ -->
+<dialog id="markupDialog">
+  <div class="panel-head">
+    <span>写真マークアップ</span>
+    <div>
+      <select id="markupColor">
+        <option value="#e02020">赤</option>
+        <option value="#ffd166">黄</option>
+        <option value="#2979ff">青</option>
+        <option value="#ffffff">白</option>
+      </select>
+      <select id="markupWidth">
+        <option value="3">細</option>
+        <option value="6" selected>中</option>
+        <option value="12">太</option>
+      </select>
+      <button id="markupUndoBtn" class="tbtn">↩ 戻す</button>
+      <button id="markupCancelBtn" class="tbtn">キャンセル</button>
+      <button id="markupSaveBtn" class="tbtn">保存</button>
+    </div>
+  </div>
+  <canvas id="markupCanvas"></canvas>
+</dialog>
+
 <div id="toast" class="hidden"></div>
 
 <script src="vendor/mvt.js"></script>
@@ -257,5 +307,7 @@
 <script src="construction.js"></script>
 <script src="schedule.js"></script>
 <script src="sites.js"></script>
+<script src="records.js"></script>
+<script src="pointcloud.js"></script>
 </body>
 </html>
