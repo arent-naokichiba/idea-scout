@@ -59,6 +59,7 @@
     <button id="surveyBtn" class="tbtn" title="近隣調査（中心地点をクリック→半径内の建物を抽出してリスト化）">📋 調査</button>
     <button id="vehicleBtn" class="tbtn" title="車両走行パス（ルートをクリックで描く→車種の最小回転半径で旋回可否を判定）">🚚 車両</button>
     <button id="zoneBtn" class="tbtn" title="ヤード作図（資材置き場・仮設事務所・仮囲い等の範囲をポリゴンで作図）">⬛ ヤード</button>
+    <button id="scheduleBtn" class="tbtn" title="工程管理（工程にレイヤーを紐づけて日付連動で現場配置を再現）">📅 工程</button>
     <button id="reportBtn" class="tbtn" title="現在の表示と統計をHTMLレポートとして保存">📄 レポート</button>
     <button id="screenshotBtn" class="tbtn" title="スクリーンショットを保存">📷</button>
     <button id="shareBtn" class="tbtn" title="現在の表示状態のURLをコピー">🔗 共有</button>
@@ -168,6 +169,34 @@
   </aside>
 </div>
 
+<!-- 工程管理パネル -->
+<div id="schedulePanel" class="hidden">
+  <div class="sched-head">
+    <span class="sched-title">📅 工程管理</span>
+    <span id="schedDate" class="sched-date"></span>
+    <button id="schedPlayBtn" class="tbtn">▶ 再生</button>
+    <button id="schedTodayBtn" class="tbtn">今日</button>
+    <span class="grow"></span>
+    <button id="schedAddBtn" class="tbtn">＋ 工程</button>
+    <button id="schedImportBtn" class="tbtn" title="工程JSONを読み込み">読込</button>
+    <button id="schedExportBtn" class="tbtn" title="工程JSONを保存">保存</button>
+    <button id="schedSyncBtn" class="tbtn" title="外部の工程管理システムと連携">🔄 連携</button>
+    <button id="schedCloseBtn" class="tbtn">✕</button>
+  </div>
+  <div id="schedSync" class="hidden">
+    <span class="muted">サーバ連携:</span>
+    <button id="schedServerLoadBtn" class="tbtn" title="GET /api/schedule から読込">サーバ読込</button>
+    <button id="schedServerSaveBtn" class="tbtn" title="POST /api/schedule に保存（外部システムから参照可）">サーバ保存</button>
+    <span class="muted">外部URL:</span>
+    <input id="schedUrlIn" type="text" placeholder="https://…/schedule.json（工程管理システムのAPI）">
+    <button id="schedUrlBtn" class="tbtn">取得</button>
+    <label class="chk"><input id="schedAutoSync" type="checkbox"> 60秒ごと自動更新</label>
+  </div>
+  <input id="schedSlider" type="range" min="0" max="1000" value="0">
+  <div id="schedTasks"></div>
+  <input id="schedFile" type="file" accept=".json,application/json" class="hidden">
+</div>
+
 <!-- ステータスバー -->
 <footer id="statusbar">
   <span id="cameraStatus"></span>
@@ -213,5 +242,6 @@
 <script src="static-api.js"></script>
 <script src="app.js"></script>
 <script src="construction.js"></script>
+<script src="schedule.js"></script>
 </body>
 </html>

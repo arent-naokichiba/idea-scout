@@ -721,14 +721,40 @@ function rebuildVehiclePath(layer) {
       },
     }));
   }
-  // 中心線
+  // 中心線（進行方向の矢印 = 一方通行・運行方向の表現）
   layer.entities.push(viewer.entities.add({
     polyline: {
       positions: pts.map((p) => vehicleToWorld(enu, p.x, p.y, 0.6)),
-      width: 2,
-      material: Cesium.Color.WHITE.withAlpha(0.8),
+      width: 12,
+      material: new Cesium.PolylineArrowMaterialProperty(Cesium.Color.WHITE.withAlpha(0.85)),
     },
   }));
+
+  // 車両の簡易3Dモデル（キャブ+荷台のボックス表現、先頭セグメントの向きに配置）
+  const segDx = pts[1].x - pts[0].x;
+  const segDy = pts[1].y - pts[0].y;
+  if (Math.hypot(segDx, segDy) > 0.5) {
+    const heading = Math.atan2(segDx, segDy); // 北基準の方位角
+    const f = { x: Math.sin(heading), y: Math.cos(heading) };
+    const cabLen = Math.max(1.5, v.length * 0.24);
+    const bodyLen = Math.max(3, v.length * 0.68);
+    const addBox = (cx, cy, len, hgt, css) => {
+      const position = vehicleToWorld(enu, cx, cy, hgt / 2 + 0.2);
+      layer.entities.push(viewer.entities.add({
+        position,
+        orientation: Cesium.Transforms.headingPitchRollQuaternion(
+          position, new Cesium.HeadingPitchRoll(heading, 0, 0)),
+        box: {
+          dimensions: new Cesium.Cartesian3(v.width, len, hgt),
+          material: Cesium.Color.fromCssColorString(css).withAlpha(0.95),
+          outline: true,
+          outlineColor: Cesium.Color.BLACK.withAlpha(0.4),
+        },
+      }));
+    };
+    addBox(pts[0].x + f.x * (cabLen / 2), pts[0].y + f.y * (cabLen / 2), cabLen, 2.6, "#4da3ff");
+    addBox(pts[0].x + f.x * (cabLen + bodyLen / 2), pts[0].y + f.y * (cabLen + bodyLen / 2), bodyLen, 3.1, "#c8ccd2");
+  }
 
   // 各コーナーの旋回判定（最小回転半径のフィレットが収まるか）
   let ngCount = 0;
@@ -846,6 +872,7 @@ const ZONE_TYPES = [
   ["material", "資材置き場", "#f2d13e", 2.0],
   ["office", "仮設事務所", "#4da3ff", 3.0],
   ["parking", "車両待機・駐車", "#5fd08a", 0.3],
+  ["gate", "出入口ゲート", "#e0a03d", 4.0],
   ["danger", "立入禁止・危険区域", "#e05656", 0.3],
   ["fence", "仮囲い", "#9aa1ac", 3.0],
 ];

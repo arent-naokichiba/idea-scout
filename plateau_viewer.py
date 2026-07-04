@@ -23,6 +23,8 @@ from idea_scout.plateau import PlateauClient
 
 VIEWER_DIR = Path(__file__).parent / "viewer"
 GSI_GEOCODE_URL = "https://msearch.gsi.go.jp/address-search/AddressSearch"
+SCHEDULE_PATH = Path(__file__).parent / "data" / "schedule.json"
+SCHEDULE_MAX_BYTES = 2 * 1024 * 1024
 
 
 class ViewerHandler(SimpleHTTPRequestHandler):
@@ -87,6 +89,14 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             c = self.plateau.get_citygml(q.get("code", ""))
             self._send_json(c or {"error": "not found"}, status=200 if c else 404)
 
+        elif path == "/api/schedule":
+            # 工程データ（外部の工程管理システムとの連携用REST）
+            if SCHEDULE_PATH.exists():
+                with open(SCHEDULE_PATH, encoding="utf-8") as f:
+                    self._send_json(json.load(f), cors=True)
+            else:
+                self._send_json({"version": 1, "project": "", "tasks": []}, cors=True)
+
         elif path == "/api/geocode":
             # 国土地理院の住所検索APIをプロキシする（ブラウザからのCORS回避）
             resp = self.plateau.session.get(
@@ -98,12 +108,50 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         else:
             self._send_json({"error": "unknown endpoint"}, status=404)
 
-    def _send_json(self, data, status: int = 200) -> None:
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/schedule":
+            self._send_json({"error": "unknown endpoint"}, status=404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0 or length > SCHEDULE_MAX_BYTES:
+                self._send_json({"error": "invalid content length"}, status=400, cors=True)
+                return
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+            if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
+                self._send_json({"error": "tasks array required"}, status=400, cors=True)
+                return
+            SCHEDULE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(SCHEDULE_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=1)
+            self._send_json({"ok": True, "tasks": len(data["tasks"])}, cors=True)
+        except json.JSONDecodeError:
+            self._send_json({"error": "invalid json"}, status=400, cors=True)
+        except BrokenPipeError:
+            pass
+        except Exception as e:
+            self._send_json({"error": str(e)}, status=500, cors=True)
+
+    def do_OPTIONS(self):
+        # 外部システムのブラウザクライアントからのCORSプリフライトに応答
+        self.send_response(204)
+        self._cors_headers()
+        self.end_headers()
+
+    def _cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def _send_json(self, data, status: int = 200, cors: bool = False) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if cors:
+            self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
