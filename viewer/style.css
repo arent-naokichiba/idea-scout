@@ -364,6 +364,16 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 .rec-mediaItem audio { flex: 1; height: 34px; }
 .rec-video { max-width: 100%; width: 320px; border-radius: 8px; background: #000; }
 
+/* 帳票・連携 */
+#docDialog { width: 620px; }
+#docBody { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; max-height: 74vh; overflow-y: auto; }
+#docBody label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+#docTemplateJson {
+  width: 100%; min-height: 220px; resize: vertical;
+  background: var(--bg3); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+  font-family: ui-monospace, monospace; font-size: 11px; padding: 8px;
+}
+
 #markupDialog { width: auto; max-width: 96vw; }
 #markupCanvas { display: block; max-width: 92vw; max-height: 72vh; margin: 10px auto;
   border-radius: 6px; touch-action: none; cursor: crosshair; }

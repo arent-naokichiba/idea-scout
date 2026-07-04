@@ -62,6 +62,7 @@
     <button id="scheduleBtn" class="tbtn" title="工程管理（工程にレイヤーを紐づけて日付連動で現場配置を再現）">📅 工程</button>
     <button id="recordBtn" class="tbtn" title="現場記録（地点をクリックして野帳メモ・写真・音声・動画を残す）">📌 記録</button>
     <button id="reportBtn" class="tbtn" title="現在の表示と統計をHTMLレポートとして保存">📄 レポート</button>
+    <button id="docBtn" class="tbtn" title="帳票の生成（是正指示書・週報・調査台帳・カスタム）とCAD連携">🖨 帳票</button>
     <button id="screenshotBtn" class="tbtn" title="スクリーンショットを保存">📷</button>
     <button id="shareBtn" class="tbtn" title="現在の表示状態のURLをコピー">🔗 共有</button>
     <button id="fpsBtn" class="tbtn" title="FPS表示">FPS</button>
@@ -265,6 +266,42 @@
   </div>
 </dialog>
 
+<!-- 帳票・連携ダイアログ -->
+<dialog id="docDialog">
+  <div class="panel-head"><span>帳票・連携</span><button id="docCloseBtn" class="tbtn">✕</button></div>
+  <div id="docBody">
+    <div class="rec-row">
+      <label>テンプレート</label>
+      <select id="docTemplateSel" style="flex:1;"></select>
+      <button id="docEditBtn" class="tbtn" title="テンプレートJSONを編集してカスタム帳票を作る">✎ 編集</button>
+    </div>
+    <div class="rec-row" id="docRecordRow">
+      <label>対象の記録</label>
+      <select id="docRecordSel" style="flex:1;"></select>
+    </div>
+    <div class="rec-row">
+      <button id="docPrintBtn" class="primary" style="flex:1;">🖨 生成して印刷 / PDF保存</button>
+      <button id="docHtmlBtn" class="tbtn">HTML保存</button>
+    </div>
+    <div id="docEditor" class="hidden">
+      <div class="muted" style="margin: 4px 0;">
+        テンプレートはJSONで自由に定義できます（ブロック: title / text / meta-table / table / images / gantt / screenshot / pagebreak、
+        値の埋め込みは {project} {record.title} など）。保存するとテンプレート一覧に追加されます。
+      </div>
+      <textarea id="docTemplateJson" spellcheck="false"></textarea>
+      <div class="rec-row">
+        <button id="docSaveTemplateBtn" class="tbtn">保存</button>
+        <button id="docDeleteTemplateBtn" class="tbtn">選択中のカスタムを削除</button>
+      </div>
+    </div>
+    <div class="rec-heading"><span>🔗 CAD連携エクスポート</span></div>
+    <div class="rec-row">
+      <button id="dxfBtn" class="tbtn">📐 DXF書き出し（ヤード・車両パス・クレーン・記録）</button>
+    </div>
+    <div class="muted">AutoCAD / Jw_cad等で開けるDXF(R12)。基準点原点のローカル座標[m]、レイヤー分け済み。</div>
+  </div>
+</dialog>
+
 <!-- 現場記録ダイアログ -->
 <dialog id="recordDialog">
   <div class="panel-head"><span id="recordTitleHead">現場記録</span><button id="recordCloseBtn" class="tbtn">✕</button></div>
@@ -309,5 +346,8 @@
 <script src="sites.js"></script>
 <script src="records.js"></script>
 <script src="pointcloud.js"></script>
+<script src="report-engine.js"></script>
+<script src="documents.js"></script>
+<script src="interop.js"></script>
 </body>
 </html>
