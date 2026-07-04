@@ -88,10 +88,55 @@ function schedApplyVisibility() {
       schedSetLayerVisible(layer, linked.get(layer.id));
     }
   }
+  schedApplyProgress();
   if (changed) {
     renderLayerList();
     requestRender();
   }
+}
+
+// ---------- 出来高表示（BIMモデルを日付進捗に応じて下から立ち上げる） ----------
+function schedApplyProgress() {
+  for (const layer of state.layers) {
+    if (layer.kind !== "model" || !layer.entity) continue;
+    const tasks = schedule.tasks.filter((t) => (t.layers || []).includes(layer.id));
+    if (tasks.length === 0) {
+      if (layer.model.clipped) {
+        layer.entity.model.clippingPlanes = undefined;
+        layer.model.clipped = false;
+      }
+      continue;
+    }
+    // 紐づく工程の期間内での経過割合を出来高率とする（複数工程なら最大値）
+    let frac = 0;
+    for (const t of tasks) {
+      const s = schedParseDate(t.start);
+      const e = schedParseDate(t.end);
+      if (s === null || e === null) continue;
+      const endMs = e + 86399000;
+      if (schedule.current >= endMs) frac = Math.max(frac, 1);
+      else if (schedule.current > s) frac = Math.max(frac, (schedule.current - s) / (endMs - s));
+    }
+    schedSetModelProgress(layer, frac);
+  }
+  requestRender();
+}
+
+function schedSetModelProgress(layer, frac) {
+  if (frac >= 1) {
+    if (layer.model.clipped) {
+      layer.entity.model.clippingPlanes = undefined;
+      layer.model.clipped = false;
+    }
+    return;
+  }
+  // モデル座標系（Z-up・スケール前）での切断高さ
+  const buildHeight = layer.model.buildHeight || 30;
+  const clipHeight = Math.max(0.3, frac * buildHeight) / (layer.model.scale || 1);
+  layer.entity.model.clippingPlanes = new Cesium.ClippingPlaneCollection({
+    planes: [new Cesium.ClippingPlane(new Cesium.Cartesian3(0, 0, -1), clipHeight)],
+  });
+  layer.model.clipped = true;
 }
 
 // ---------- 状態変更 ----------
@@ -303,13 +348,14 @@ $("schedSlider").oninput = (e) => {
 
 $("schedTodayBtn").onclick = () => schedSetDate(Date.now());
 
-$("schedPlayBtn").onclick = () => {
-  if (schedule.playing) {
-    clearInterval(schedule.playing);
-    schedule.playing = null;
-    $("schedPlayBtn").textContent = "▶ 再生";
-    return;
-  }
+function schedStopPlayback() {
+  if (schedule.playing) clearInterval(schedule.playing);
+  schedule.playing = null;
+  $("schedPlayBtn").textContent = "▶ 再生";
+}
+
+function schedStartPlayback(onDone) {
+  schedStopPlayback();
   const [min, max] = schedRange();
   if (schedule.current >= max - 1000) schedSetDate(min);
   $("schedPlayBtn").textContent = "⏸ 停止";
@@ -317,14 +363,91 @@ $("schedPlayBtn").onclick = () => {
     const step = (max - min) / 240; // 約12秒で全期間
     if (schedule.current + step >= max) {
       schedSetDate(max);
-      clearInterval(schedule.playing);
-      schedule.playing = null;
-      $("schedPlayBtn").textContent = "▶ 再生";
+      schedStopPlayback();
+      if (onDone) onDone();
     } else {
       schedSetDate(schedule.current + step);
     }
   }, 50);
+}
+
+$("schedPlayBtn").onclick = () => {
+  if (schedule.playing) schedStopPlayback();
+  else schedStartPlayback();
 };
+
+// ---------- 4D再生の動画書き出し（WebM） ----------
+$("schedVideoBtn").onclick = () => {
+  if (schedule.recording) return;
+  if (schedule.tasks.length === 0) {
+    toast("工程がありません。工程を追加してから録画してください");
+    return;
+  }
+  const canvas = viewer.canvas;
+  if (typeof MediaRecorder === "undefined" || !canvas.captureStream) {
+    toast("このブラウザは動画書き出しに未対応です");
+    return;
+  }
+  const mime = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
+    .find((m) => MediaRecorder.isTypeSupported(m));
+  if (!mime) {
+    toast("WebM録画に未対応のブラウザです");
+    return;
+  }
+
+  const stream = canvas.captureStream(30);
+  const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+  const chunks = [];
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+
+  const prevRenderMode = viewer.scene.requestRenderMode;
+  recorder.onstop = () => {
+    viewer.scene.requestRenderMode = prevRenderMode;
+    for (const track of stream.getTracks()) track.stop();
+    schedule.recording = false;
+    $("schedVideoBtn").classList.remove("active");
+    const blob = new Blob(chunks, { type: "video/webm" });
+    downloadFile(blob, `plateau-4d-${exportTimestamp()}.webm`, "video/webm");
+    toast(`4D動画を保存しました（${(blob.size / 1024 / 1024).toFixed(1)} MB）`);
+  };
+
+  schedule.recording = true;
+  $("schedVideoBtn").classList.add("active");
+  viewer.scene.requestRenderMode = false; // 録画中は連続レンダリングで滑らかに
+  toast("4D再生を録画しています...（再生終了で自動保存）");
+  recorder.start(250);
+  schedSetDate(schedRange()[0]);
+  schedStartPlayback(() => {
+    setTimeout(() => recorder.stop(), 500); // 最終フレームを確実に収録
+  });
+};
+
+// ---------- HTMLレポート用の工程表セクション（app.jsのbuildReportHtmlから参照） ----------
+function schedReportSection() {
+  if (schedule.tasks.length === 0) return "";
+  const [min, max] = schedRange();
+  const span = max - min;
+  const cursorLeft = ((schedule.current - min) / span) * 100;
+  const rows = schedule.tasks.map((t) => {
+    const s = schedParseDate(t.start);
+    const e = (schedParseDate(t.end) ?? s ?? min) + 86399000;
+    const left = s !== null ? ((s - min) / span) * 100 : 0;
+    const width = s !== null ? Math.max(0.5, ((e - s) / span) * 100) : 0;
+    const active = schedTaskActive(t, schedule.current);
+    const color = active ? "#3c78c8" : (t.progress || 0) >= 100 ? "#3f7d5a" : "#9aa6b4";
+    return `<tr><td>${escapeHtml(t.name)}</td><td>${escapeHtml(t.start)}</td><td>${escapeHtml(t.end)}</td>
+      <td>${t.progress || 0}%</td>
+      <td style="width:42%"><div style="position:relative;height:14px;background:#eef1f4;border-radius:4px;">
+        <div style="position:absolute;left:${left}%;width:${width}%;top:2px;bottom:2px;background:${color};border-radius:3px;"></div>
+        <div style="position:absolute;left:${cursorLeft}%;top:0;bottom:0;width:2px;background:#e0a03d;"></div>
+      </div></td></tr>`;
+  }).join("");
+  return `
+  <h2>工程表${schedule.project ? " — " + escapeHtml(schedule.project) : ""}</h2>
+  <p>表示日付: ${schedFormat(schedule.current)}（ガント上のオレンジ線）</p>
+  <table><thead><tr><th>工程</th><th>開始</th><th>終了</th><th>進捗</th><th></th></tr></thead>
+  <tbody>${rows}</tbody></table>`;
+}
 
 // ---------- 入出力・外部連携 ----------
 $("schedExportBtn").onclick = () => {

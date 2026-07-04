@@ -2184,6 +2184,7 @@ function buildReportHtml(image, bldgLayer, stats) {
 <h2>レイヤー一覧</h2>
 <table><thead><tr><th>データセット</th><th>形式</th><th>年度</th><th>状態</th></tr></thead>
 <tbody>${layerRows || '<tr><td colspan="4">レイヤーなし</td></tr>'}</tbody></table>
+${typeof schedReportSection === "function" ? schedReportSection() : ""}
 ${statsHtml}
 <footer>出典: 国土交通省 Project PLATEAU / 地理院タイル — PLATEAU Viewerで生成</footer>
 </body></html>`;

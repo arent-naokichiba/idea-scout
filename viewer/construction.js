@@ -130,6 +130,22 @@ function renderModelRows(layer, li) {
   row2.append("高さ+", heightIn, "倍率", scaleIn);
   li.appendChild(row2);
 
+  // 出来高表示用の建物全高（工程リンク時に日付進捗でこの高さまで立ち上がる）
+  const rowH = document.createElement("div");
+  rowH.className = "layer-row";
+  const buildHIn = document.createElement("input");
+  buildHIn.type = "number";
+  buildHIn.step = "1";
+  buildHIn.min = "1";
+  buildHIn.value = m.buildHeight || 30;
+  buildHIn.title = "出来高表示（工程リンク時）に使うモデルの全高";
+  buildHIn.onchange = () => {
+    m.buildHeight = Math.max(1, parseFloat(buildHIn.value) || 30);
+    if (typeof schedApplyProgress === "function") schedApplyProgress();
+  };
+  rowH.append("全高(m)", buildHIn, "※出来高表示用");
+  li.appendChild(rowH);
+
   const row3 = document.createElement("div");
   row3.className = "layer-row";
   const relocateBtn = document.createElement("button");
