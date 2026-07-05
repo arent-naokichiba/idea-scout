@@ -1049,6 +1049,7 @@ function renderZoneRows(layer, li) {
   row3.append(info, exportBtn);
   li.appendChild(row3);
 
+  if (typeof renderMassingRow === "function") renderMassingRow(layer, li);
   if (typeof renderKiseiRow === "function") renderKiseiRow(layer, li);
 }
 

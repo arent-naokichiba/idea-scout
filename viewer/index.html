@@ -158,10 +158,13 @@
 
     <!-- 案件タブ（ボリューム比較スタディ） -->
     <section id="tab-cases" class="tab-body hidden">
-      <button id="caseNewBtn" class="primary">新規案件を作成</button>
+      <div style="display:flex; gap:6px;">
+        <button id="caseNewBtn" class="primary" style="flex:1;">新規案件を作成</button>
+        <button id="caseCsvBtn" class="tbtn" title="全案件・全案の一覧をCSVで出力（Excel対応）">CSV</button>
+      </div>
       <div class="muted" style="margin-top: 7px; line-height: 1.6;">
         敷地検討を「案件」として束ね、計画ボリューム構成をA案/B案…として保存・比較できます。
-        案の保存時に法規チェック結果（斜線・天空率・日影）も記録されます。
+        案の保存時に法規チェック（斜線・天空率・日影）と工事費概算が自動記録されます。
       </div>
       <ul id="caseList" class="layer-list"></ul>
       <div id="caseEmpty" class="muted center">案件はありません。</div>

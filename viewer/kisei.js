@@ -597,6 +597,16 @@ const HIKAGE_REGS = [
   ["5-3", "規制 5h/3h", 5, 3],
 ];
 
+// 日影時間 → 等時間帯の色
+function hikageBandColor(h) {
+  return h >= 5 ? "rgba(107,17,17,0.66)" :
+    h >= 4 ? "rgba(165,25,25,0.58)" :
+    h >= 3 ? "rgba(226,58,58,0.52)" :
+    h >= 2.5 ? "rgba(240,120,32,0.46)" :
+    h >= 2 ? "rgba(242,190,34,0.42)" :
+    h >= 1 ? "rgba(246,226,140,0.30)" : null;
+}
+
 // 計算のみ（lastHikageを更新して格子集計を返す。レイヤー生成なし）
 function hikageCompute(zoneLayer, opts) {
   const frame = kiseiLocalFrame(zoneLayer.zone.points);
@@ -688,16 +698,9 @@ function createHikageLayer(zoneLayer, opts) {
   const canvas = document.createElement("canvas");
   canvas.width = nx; canvas.height = ny;
   const g = canvas.getContext("2d");
-  const bandColor = (h) =>
-    h >= 5 ? "rgba(107,17,17,0.66)" :
-    h >= 4 ? "rgba(165,25,25,0.58)" :
-    h >= 3 ? "rgba(226,58,58,0.52)" :
-    h >= 2.5 ? "rgba(240,120,32,0.46)" :
-    h >= 2 ? "rgba(242,190,34,0.42)" :
-    h >= 1 ? "rgba(246,226,140,0.30)" : null;
   for (let iy = 0; iy < ny; iy++) {
     for (let ix = 0; ix < nx; ix++) {
-      const c = bandColor(hours[iy * nx + ix]);
+      const c = hikageBandColor(hours[iy * nx + ix]);
       if (!c) continue;
       g.fillStyle = c;
       g.fillRect(ix, ny - 1 - iy, 1, 1);
@@ -768,3 +771,40 @@ function renderHikageLayerRows(layer, li) {
 }
 
 $("tenkuCloseBtn") && ($("tenkuCloseBtn").onclick = () => $("tenkuDialog").close());
+
+// 等時間日影のサムネイル画像（案の比較表・比較検討書用）
+// hikageCompute()の戻り値から、敷地矩形・5m/10mライン入りの平面図PNGを生成する
+function hikageThumbnail(r) {
+  const { hours, nx, ny, gx0, gy0, gx1, gy1, pitch, frame } = r;
+  const { minX, minY, maxX, maxY } = frame.bbox;
+  const S = 150;
+  const canvas = document.createElement("canvas");
+  canvas.width = S; canvas.height = S;
+  const g = canvas.getContext("2d");
+  g.fillStyle = "#f5f6f8";
+  g.fillRect(0, 0, S, S);
+  const sx = S / (gx1 - gx0), sy = S / (gy1 - gy0);
+  const px = (x) => (x - gx0) * sx;
+  const py = (y) => S - (y - gy0) * sy; // 北が上
+
+  for (let iy = 0; iy < ny; iy++) {
+    for (let ix = 0; ix < nx; ix++) {
+      const c = hikageBandColor(hours[iy * nx + ix]);
+      if (!c) continue;
+      g.fillStyle = c;
+      g.fillRect(px(gx0 + ix * pitch), py(gy0 + (iy + 1) * pitch),
+        pitch * sx + 0.6, pitch * sy + 0.6);
+    }
+  }
+  // 敷地境界と5m/10mライン
+  for (const [off, color, w] of [[0, "#333a45", 1.6], [5, "#2a9fd8", 1], [10, "#2a58d8", 1]]) {
+    g.strokeStyle = color;
+    g.lineWidth = w;
+    g.strokeRect(px(minX - off), py(maxY + off),
+      (maxX - minX + off * 2) * sx, (maxY - minY + off * 2) * sy);
+  }
+  g.fillStyle = "#333a45";
+  g.font = "9px sans-serif";
+  g.fillText("N↑", 4, 11);
+  return canvas.toDataURL("image/png");
+}

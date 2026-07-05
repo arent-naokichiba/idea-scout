@@ -87,6 +87,7 @@ function caseSaveVariant(caseId) {
   // 比較表が常に最新の判定で埋まるようにする
   const kiseiLayers = state.layers.filter((l) => l.kind === "kisei");
   let checked = false;
+  let hikageThumb = null;
   for (const k of kiseiLayers) kiseiJudge(k, true);
   if (kiseiLayers.length > 0) {
     const k0 = kiseiLayers[0];
@@ -96,7 +97,9 @@ function caseSaveVariant(caseId) {
       const prev = (typeof lastHikage !== "undefined" && lastHikage)
         ? { planeH: lastHikage.planeH, regA: lastHikage.regA, regB: lastHikage.regB }
         : { planeH: 4, regA: 3, regB: 2 };
-      hikageCompute(zone, prev);
+      const hr = hikageCompute(zone, prev);
+      // 等時間日影の平面サムネイル（比較表・比較検討書に表示）
+      if (hr && typeof hikageThumbnail === "function") hikageThumb = hikageThumbnail(hr);
     }
     renderLayerList();
     checked = true;
@@ -118,6 +121,7 @@ function caseSaveVariant(caseId) {
       tenku: (typeof lastTenku !== "undefined" && lastTenku) ? lastTenku.ok : null,
       hikage: (typeof lastHikage !== "undefined" && lastHikage) ? lastHikage.ok : null,
     },
+    hikageThumb,
   });
   casesSave(cases);
   renderCases();
@@ -187,6 +191,28 @@ function caseCompare(caseId) {
   addRow("斜線制限", c.variants.map((v) => `${caseOkIcon(v.ok.kisei)} ${v.plan.kisei}`));
   addRow("天空率", c.variants.map((v) => `${caseOkIcon(v.ok.tenku)} ${v.plan.tenku}`));
   addRow("日影（等時間）", c.variants.map((v) => `${caseOkIcon(v.ok.hikage)} ${v.plan.hikage}`));
+  // 等時間日影の平面図サムネイル（案の形状比較が一目でできる）
+  if (c.variants.some((v) => v.hikageThumb)) {
+    const tr = document.createElement("tr");
+    const th = document.createElement("td");
+    th.textContent = "等時間日影図";
+    th.className = "case-rowhead";
+    tr.appendChild(th);
+    for (const v of c.variants) {
+      const td = document.createElement("td");
+      if (v.hikageThumb) {
+        const img = new Image();
+        img.src = v.hikageThumb;
+        img.width = 140;
+        img.style.borderRadius = "6px";
+        td.appendChild(img);
+      } else {
+        td.textContent = "—";
+      }
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
   body.appendChild(table);
 
   const note = document.createElement("div");
@@ -218,27 +244,32 @@ async function caseCompareDoc(caseId) {
   addRow("天空率", (v) => `${caseOkIcon(v.ok.tenku)} ${v.plan.tenku}`);
   addRow("日影（等時間）", (v) => `${caseOkIcon(v.ok.hikage)} ${v.plan.hikage}`);
 
-  const template = {
-    id: "case-compare",
-    name: "ボリューム比較検討書",
-    blocks: [
-      { type: "title", text: "ボリューム比較検討書", subtitle: c.name },
-      { type: "meta-table", rows: [
-        ["案件名", c.name],
-        ["所在地", c.sitecheck?.placeName || "-"],
-        ["用途地域", c.sitecheck?.useDistrict || "-"],
-        ["想定用途（概算単価）", `${usage[1]}（${usage[2]}万円/m²）`],
-        ["作成日", "{now}"],
-      ]},
-      { type: "table", title: `比較表（${c.variants.length}案）`, source: "rows", columns },
-      { type: "screenshot", caption: "検討モデル（3Dビュー）" },
-      { type: "text", label: "備考",
-        text: "本書はPLATEAU配信データと本ツールの簡易判定（外接矩形近似・緩和規定未考慮）および用途別概算単価による参考資料です。工事費・法規適合の確定には見積・設計者による正式な検討を要します。" },
-    ],
-  };
+  const blocks = [
+    { type: "title", text: "ボリューム比較検討書", subtitle: c.name },
+    { type: "meta-table", rows: [
+      ["案件名", c.name],
+      ["所在地", c.sitecheck?.placeName || "-"],
+      ["用途地域", c.sitecheck?.useDistrict || "-"],
+      ["想定用途（概算単価）", `${usage[1]}（${usage[2]}万円/m²）`],
+      ["作成日", "{now}"],
+    ]},
+    { type: "table", title: `比較表（${c.variants.length}案）`, source: "rows", columns },
+  ];
+  const thumbs = c.variants.filter((v) => v.hikageThumb)
+    .map((v) => ({ src: v.hikageThumb, caption: v.name }));
+  if (thumbs.length > 0) {
+    blocks.push({ type: "images", title: "等時間日影図（冬至・測定面平面）", source: "thumbs",
+      columns: Math.min(3, thumbs.length), caption: true });
+  }
+  blocks.push(
+    { type: "screenshot", caption: "検討モデル（3Dビュー）" },
+    { type: "text", label: "備考",
+      text: "本書はPLATEAU配信データと本ツールの簡易判定（外接矩形近似・緩和規定未考慮）および用途別概算単価による参考資料です。工事費・法規適合の確定には見積・設計者による正式な検討を要します。" });
+  const template = { id: "case-compare", name: "ボリューム比較検討書", blocks };
   const ctx = {
     now: new Date().toLocaleDateString("ja-JP"),
     rows,
+    thumbs,
     screenshot: await captureCanvas(),
   };
   const html = ReportEngine.render(template, ctx);
@@ -247,6 +278,46 @@ async function caseCompareDoc(caseId) {
   return html;
 }
 $("caseCompareDocBtn").onclick = () => caseCompareDoc(caseCompareCurrentId);
+
+// ---------- 案件一覧のCSV出力（Excel対応・経営層向け一覧） ----------
+function caseOkText(v) {
+  return v === true ? "適合" : v === false ? "超過" : "未実施";
+}
+
+function caseExportCsv() {
+  const cases = casesLoad();
+  const rows = [[
+    "案件名", "所在地", "用途地域", "想定用途", "単価(万円/m²)",
+    "案名", "保存日時", "棟数", "最高高さ(m)", "建築面積", "延床概算",
+    "延床(m² 数値)", "階数", "工事費概算", "工事費(万円)",
+    "斜線制限", "天空率", "日影",
+  ]];
+  for (const c of cases) {
+    const u = caseUsageDef(c);
+    for (const v of c.variants) {
+      rows.push([
+        c.name, c.sitecheck?.placeName || "", c.sitecheck?.useDistrict || "",
+        u[1], u[2],
+        v.name, new Date(v.savedAt).toLocaleString("ja-JP"),
+        v.volumes.length, v.maxH.toFixed(1),
+        v.plan.footprint, v.plan.gfa,
+        Math.round(v.gfaNum), v.plan.floors,
+        caseCostText(c, v), Math.round(caseCostMan(c, v)),
+        caseOkText(v.ok.kisei), caseOkText(v.ok.tenku), caseOkText(v.ok.hikage),
+      ]);
+    }
+  }
+  if (rows.length === 1) {
+    toast("出力する案がありません（案件に案を保存してください）");
+    return null;
+  }
+  const csv = "\ufeff" + rows.map((r) =>
+    r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  downloadFile(csv, `plateau-cases-${exportTimestamp()}.csv`, "text/csv");
+  toast(`${rows.length - 1}案をCSVで出力しました（Excelで開けます）`);
+  return csv;
+}
+$("caseCsvBtn").onclick = () => caseExportCsv();
 
 // ---------- 一覧表示 ----------
 function renderCases() {

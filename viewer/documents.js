@@ -181,17 +181,21 @@ async function buildDocContext(recordId) {
 
 // 計画ボリューム/CADモデルと法規チェック（kisei.js）の結果を帳票向け文字列に整形
 function docPlanContext() {
-  const vol = state.layers.find((l) => l.kind === "volume");
+  const vols = state.layers.filter((l) => l.kind === "volume");
   const model = state.layers.find((l) => l.kind === "model");
   let footprint = "-", gfa = "-", height = "-", floors = "-";
-  if (vol) {
-    const v = vol.volume;
-    const fa = v.width * v.depth;
-    const fl = Math.max(1, Math.floor(v.height / 3.1));
-    footprint = `${Math.round(fa).toLocaleString()} m²（${v.width.toFixed(1)}×${v.depth.toFixed(1)}m）`;
-    gfa = `約 ${Math.round(fa * fl).toLocaleString()} m²`;
-    height = `${v.height.toFixed(1)} m`;
-    floors = `約 ${fl} 階`;
+  if (vols.length > 0) {
+    // 複数棟（L字/コの字/ツイン等の分割配置）は全棟を合算する
+    const fa = vols.reduce((s, l) => s + l.volume.width * l.volume.depth, 0);
+    const gfaN = vols.reduce((s, l) =>
+      s + l.volume.width * l.volume.depth * Math.max(1, Math.floor(l.volume.height / 3.1)), 0);
+    const maxH = Math.max(...vols.map((l) => l.volume.height));
+    const fl = Math.max(1, Math.floor(maxH / 3.1));
+    const v0 = vols[0].volume;
+    footprint = `${Math.round(fa).toLocaleString()} m²（${vols.length === 1 ? `${v0.width.toFixed(1)}×${v0.depth.toFixed(1)}m` : `${vols.length}棟`}）`;
+    gfa = `約 ${Math.round(gfaN).toLocaleString()} m²`;
+    height = `${maxH.toFixed(1)} m`;
+    floors = `約 ${fl} 階${vols.length > 1 ? "（最高部）" : ""}`;
   } else if (model) {
     footprint = "（CADモデル配置）";
     height = `${((model.model.buildHeight || 30) + (model.model.heightOffset || 0)).toFixed(1)} m`;

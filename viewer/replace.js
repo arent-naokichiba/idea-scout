@@ -202,6 +202,105 @@ $("replGlbFile").onchange = (e) => {
   reader.readAsArrayBuffer(file);
 };
 
+// ============================================================
+// ボリューム配置エディタ（敷地に単棟/L字/コの字/ツインを自動配置）
+// 生成される各棟は通常の計画ボリュームレイヤー（高さ編集・保存・法規判定対象）
+// ============================================================
+const MASSING_SHAPES = [
+  ["single", "単棟"],
+  ["l", "L字"],
+  ["c", "コの字"],
+  ["twin", "ツイン"],
+];
+
+// 敷地ヤードのレイヤーパネルに追加（construction.jsのrenderZoneRowsから呼ばれる）
+function renderMassingRow(layer, li) {
+  if (layer.kind !== "zone") return;
+  const row = document.createElement("div");
+  row.className = "layer-row";
+  const shapeSel = document.createElement("select");
+  for (const [v, label] of MASSING_SHAPES) {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = label;
+    shapeSel.appendChild(o);
+  }
+  const hIn = document.createElement("input");
+  hIn.type = "number";
+  hIn.min = "3";
+  hIn.step = "3";
+  hIn.value = "30";
+  hIn.title = "配置するボリュームの高さ(m)";
+  const btn = document.createElement("button");
+  btn.className = "tbtn";
+  btn.textContent = "⬜ 配置";
+  btn.title = "敷地に計画ボリュームを自動配置（敷地内の既存ボリュームは置き換え）";
+  btn.onclick = () => massingPlace(layer, shapeSel.value, Math.max(3, parseFloat(hIn.value) || 30));
+  row.append(shapeSel, "高さ", hIn, btn);
+  li.appendChild(row);
+}
+
+function massingPlace(zoneLayer, shape, h) {
+  const frame = kiseiLocalFrame(zoneLayer.zone.points);
+  const { minX, minY, maxX, maxY } = frame.bbox;
+  const o = 3; // 境界からの離隔
+  const W = maxX - minX - o * 2, D = maxY - minY - o * 2;
+  if (W < 6 || D < 6) {
+    toast("敷地が小さすぎます（10m角以上のヤードで使用してください）");
+    return;
+  }
+  const x0 = minX + o, y0 = minY + o;
+
+  // [cx, cy, w, d]（frameローカル座標）
+  let boxes = [];
+  if (shape === "single") {
+    boxes = [[x0 + W / 2, y0 + D / 2, W, D]];
+  } else if (shape === "l") {
+    const t = Math.max(6, Math.min(W, D) * 0.45);
+    boxes = [
+      [x0 + W / 2, y0 + t / 2, W, t],                    // 南バー
+      [x0 + t / 2, y0 + t + (D - t) / 2, t, D - t],      // 西ウィング
+    ];
+  } else if (shape === "c") {
+    const t = Math.max(6, Math.min(W, D) * 0.4);
+    boxes = [
+      [x0 + W / 2, y0 + t / 2, W, t],                    // 南バー
+      [x0 + t / 2, y0 + t + (D - t) / 2, t, D - t],      // 西ウィング
+      [x0 + W - t / 2, y0 + t + (D - t) / 2, t, D - t],  // 東ウィング
+    ];
+  } else if (shape === "twin") {
+    const gap = Math.max(4, W * 0.12);
+    const w = (W - gap) / 2, d = D * 0.7;
+    boxes = [
+      [x0 + w / 2, y0 + D / 2, w, d],
+      [x0 + W - w / 2, y0 + D / 2, w, d],
+    ];
+  }
+
+  // 敷地内の既存ボリュームは置き換え（マッシングスタディの繰り返し用）
+  const inSite = state.layers.filter((l) => {
+    if (l.kind !== "volume") return false;
+    const p = frame.toLocal(Cesium.Cartesian3.fromDegrees(l.volume.lon, l.volume.lat, 0));
+    return p.x >= minX - 1 && p.x <= maxX + 1 && p.y >= minY - 1 && p.y <= maxY + 1;
+  });
+  for (const l of inSite) removeLayer(l);
+
+  for (const [cx, cy, w, d] of boxes) {
+    const carto = Cesium.Cartographic.fromCartesian(frame.toWorld(cx, cy, 0));
+    restoreVolumeLayer({
+      lon: Cesium.Math.toDegrees(carto.longitude),
+      lat: Cesium.Math.toDegrees(carto.latitude),
+      baseH: carto.height,
+      width: w, depth: d, height: h,
+    });
+  }
+  for (const k of state.layers.filter((l) => l.kind === "kisei")) kiseiJudge(k, true);
+  renderLayerList();
+  requestRender();
+  const def = MASSING_SHAPES.find((s) => s[0] === shape);
+  toast(`${def[1]}ボリュームを配置しました（${boxes.length}棟・高さ${h}m${inSite.length ? ` / 既存${inSite.length}棟を置換` : ""}）`);
+}
+
 // レイヤーパネル: 非表示建物の解除UI（app.jsのrenderLayerListから呼ばれる）
 function renderHiddenRow(layer, li) {
   if (!layer.hiddenIds || layer.hiddenIds.length === 0) return;
