@@ -272,6 +272,7 @@ async function exportPackage() {
     { name: "sites.json", data: JSON.stringify(sitesLoad(), null, 1) },
     { name: "templates.json", data: JSON.stringify(docUserTemplates(), null, 1) },
     { name: "bookmarks.json", data: localStorage.getItem(BOOKMARK_KEY) || "[]" },
+    { name: "cases.json", data: localStorage.getItem(CASES_KEY) || "[]" },
   ];
   const recMeta = [];
   for (const r of recState.records) {
@@ -323,6 +324,10 @@ async function importPackage(file) {
   if (templates) localStorage.setItem(DOC_TEMPLATES_KEY, JSON.stringify(templates));
   if (entries.has("bookmarks.json")) {
     localStorage.setItem(BOOKMARK_KEY, decoder.decode(entries.get("bookmarks.json")));
+  }
+  if (entries.has("cases.json")) {
+    localStorage.setItem(CASES_KEY, decoder.decode(entries.get("cases.json")));
+    if (typeof renderCases === "function") renderCases();
   }
   renderSites();
   renderBookmarks();

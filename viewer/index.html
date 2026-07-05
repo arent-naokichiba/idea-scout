@@ -79,6 +79,7 @@
       <button class="tab active" data-tab="search">検索</button>
       <button class="tab" data-tab="layers">レイヤー <span id="layerCount" class="badge hidden">0</span></button>
       <button class="tab" data-tab="sites">現場</button>
+      <button class="tab" data-tab="cases">案件</button>
       <button class="tab" data-tab="records">記録</button>
       <button class="tab" data-tab="bookmarks">視点</button>
     </nav>
@@ -153,6 +154,17 @@
       </div>
       <ul id="siteList" class="result-list"></ul>
       <div id="siteEmpty" class="muted center">保存された現場はありません。</div>
+    </section>
+
+    <!-- 案件タブ（ボリューム比較スタディ） -->
+    <section id="tab-cases" class="tab-body hidden">
+      <button id="caseNewBtn" class="primary">新規案件を作成</button>
+      <div class="muted" style="margin-top: 7px; line-height: 1.6;">
+        敷地検討を「案件」として束ね、計画ボリューム構成をA案/B案…として保存・比較できます。
+        案の保存時に法規チェック結果（斜線・天空率・日影）も記録されます。
+      </div>
+      <ul id="caseList" class="layer-list"></ul>
+      <div id="caseEmpty" class="muted center">案件はありません。</div>
     </section>
 
     <!-- 記録タブ（野帳・指摘管理） -->
@@ -330,6 +342,12 @@
   </div>
 </dialog>
 
+<!-- 案比較ダイアログ -->
+<dialog id="caseCompareDialog">
+  <div class="panel-head"><span id="caseCompareTitle"></span><button id="caseCompareCloseBtn" class="tbtn">✕</button></div>
+  <div id="caseCompareBody"></div>
+</dialog>
+
 <!-- 天空率比較ダイアログ -->
 <dialog id="tenkuDialog">
   <div class="panel-head"><span>天空率比較（簡易）</span><button id="tenkuCloseBtn" class="tbtn">✕</button></div>
@@ -379,5 +397,6 @@
 <script src="replace.js"></script>
 <script src="sitecheck.js"></script>
 <script src="kisei.js"></script>
+<script src="study.js"></script>
 </body>
 </html>

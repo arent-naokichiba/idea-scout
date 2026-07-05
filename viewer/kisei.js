@@ -74,16 +74,31 @@ function renderKiseiRow(layer, li) {
   } else if (typeof lastSiteCheck !== "undefined" && lastSiteCheck) {
     useSel.value = "other";
   }
+  // 北側斜線（低層住居系 5m+1.25 / 中高層住居系 10m+1.25）
+  const kitaSel = document.createElement("select");
+  for (const [v, label] of [["none", "北側斜線なし"], ["low", "北側5m+1.25"], ["mid", "北側10m+1.25"]]) {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = label;
+    kitaSel.appendChild(o);
+  }
+  kitaSel.title = "北側斜線（第1・2種低層/田園: 5m+1.25 / 第1・2種中高層: 10m+1.25）";
+  if (typeof lastSiteCheck !== "undefined" && lastSiteCheck) {
+    const ud = lastSiteCheck.useDistrict || "";
+    if (ud.includes("低層") || ud.includes("田園")) kitaSel.value = "low";
+    else if (ud.includes("中高")) kitaSel.value = "mid";
+  }
   const btn = document.createElement("button");
   btn.className = "tbtn";
   btn.textContent = "📐 斜線";
-  btn.title = "道路斜線・隣地斜線の制限面を表示して高さ適合を判定";
+  btn.title = "道路斜線・隣地斜線・北側斜線の制限面を表示して高さ適合を判定";
   btn.onclick = () => createKiseiLayer(layer, {
     roadSide: roadSel.value,
     roadWidth: Math.max(2, parseFloat(widthIn.value) || 6),
     residential: useSel.value === "res",
+    kita: kitaSel.value,
   });
-  row.append(roadSel, "幅員", widthIn, useSel, btn);
+  row.append(roadSel, "幅員", widthIn, useSel, kitaSel, btn);
   li.appendChild(row);
 
   // 等時間日影（冬至日・測定面グリッド集計）
@@ -123,10 +138,12 @@ function createKiseiLayer(zoneLayer, opts) {
   const adjBase = opts.residential ? 20 : 31;
   const adjSlope = opts.residential ? 1.25 : 2.5;
 
+  const kitaBase = opts.kita === "low" ? 5 : opts.kita === "mid" ? 10 : null;
+
   const layer = {
     id: `kisei-${++kiseiCounter}`,
     dataset: {
-      name: `📐 斜線制限（${zoneLayer.zone.label} / ${opts.residential ? "住居系" : "商業・工業系"} / 道路${opts.roadWidth}m）`,
+      name: `📐 斜線制限（${zoneLayer.zone.label} / ${opts.residential ? "住居系" : "商業・工業系"} / 道路${opts.roadWidth}m${kitaBase !== null ? ` / 北側${kitaBase}m` : ""}）`,
       format: "法規面", type: "法規チェック", type_en: "kisei",
     },
     kind: "kisei",
@@ -181,6 +198,36 @@ function createKiseiLayer(zoneLayer, opts) {
     }
   }
 
+  // 北側斜線: 北側境界から真北方向の距離に応じて 5m/10m + 1.25×距離（緑面）
+  if (kitaBase !== null) {
+    const kitaColor = Cesium.Color.fromCssColorString("#3ec97f");
+    const depth = maxY - minY;
+    const h1 = kitaBase + depth * 1.25;
+    layer.entities.push(viewer.entities.add({
+      polygon: {
+        hierarchy: new Cesium.PolygonHierarchy([
+          frame.toWorld(minX, maxY, groundZ + kitaBase),
+          frame.toWorld(maxX, maxY, groundZ + kitaBase),
+          frame.toWorld(maxX, minY, groundZ + h1),
+          frame.toWorld(minX, minY, groundZ + h1),
+        ]),
+        material: kitaColor.withAlpha(0.16),
+        perPositionHeight: true,
+        outline: false,
+      },
+    }));
+    layer.entities.push(viewer.entities.add({
+      polyline: {
+        positions: [frame.toWorld(minX, maxY, groundZ + kitaBase), frame.toWorld(maxX, maxY, groundZ + kitaBase)],
+        width: 3, material: kitaColor.withAlpha(0.9),
+      },
+    }));
+    layer.entities.push(viewer.entities.add({
+      position: frame.toWorld((minX + maxX) / 2, maxY, groundZ + kitaBase + 2),
+      label: measureLabel(`北側斜線 ${kitaBase}m+1.25`),
+    }));
+  }
+
   kiseiJudge(layer);
   state.layers.push(layer);
   renderLayerList();
@@ -203,6 +250,9 @@ function kiseiAllowedHeight(k, x, y) {
       : adjBase + dist[key] * adjSlope;
     allowed = Math.min(allowed, h);
   }
+  // 北側斜線（北側境界からの真北方向距離）
+  if (k.kita === "low") allowed = Math.min(allowed, 5 + dist.N * 1.25);
+  else if (k.kita === "mid") allowed = Math.min(allowed, 10 + dist.N * 1.25);
   return allowed;
 }
 
@@ -266,7 +316,7 @@ function renderKiseiLayerRows(layer, li) {
   }
   const note = document.createElement("div");
   note.className = "layer-row muted";
-  note.textContent = "※外接矩形近似の参考判定（緩和規定・北側斜線等は未考慮）";
+  note.textContent = "※外接矩形近似の参考判定（緩和規定等は未考慮 / 真北=座標北と仮定）";
   li.appendChild(note);
 }
 
