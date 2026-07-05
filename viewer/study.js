@@ -13,6 +13,30 @@
 
 const CASES_KEY = "plateau-viewer-cases";
 
+// 用途別の概算工事費単価（万円/m²・企画検討用の目安値）
+const CASE_USAGES = [
+  ["office", "事務所", 40],
+  ["residence", "共同住宅", 35],
+  ["retail", "商業施設", 40],
+  ["hotel", "ホテル", 45],
+  ["hospital", "病院・福祉", 50],
+  ["school", "学校", 35],
+  ["factory", "工場・倉庫", 25],
+];
+
+function caseUsageDef(c) {
+  return CASE_USAGES.find((u) => u[0] === (c.usage || "office")) || CASE_USAGES[0];
+}
+
+// 概算工事費 = 延床概算 × 用途別単価
+function caseCostMan(c, v) {
+  return v.gfaNum * caseUsageDef(c)[2]; // 万円
+}
+function caseCostText(c, v) {
+  const man = caseCostMan(c, v);
+  return man >= 10000 ? `約 ${(man / 10000).toFixed(1)} 億円` : `約 ${Math.round(man).toLocaleString()} 万円`;
+}
+
 function casesLoad() {
   try {
     return JSON.parse(localStorage.getItem(CASES_KEY)) || [];
@@ -59,8 +83,27 @@ function caseSaveVariant(caseId) {
   const name = window.prompt("案の名称:", defName);
   if (name === null) return;
 
+  // ワンクリック総合チェック: 斜線を再判定し、天空率・等時間日影も自動実行して
+  // 比較表が常に最新の判定で埋まるようにする
+  const kiseiLayers = state.layers.filter((l) => l.kind === "kisei");
+  let checked = false;
+  for (const k of kiseiLayers) kiseiJudge(k, true);
+  if (kiseiLayers.length > 0) {
+    const k0 = kiseiLayers[0];
+    tenkuCompute(k0.kisei);
+    const zone = state.layers.find((l) => l.id === k0.kisei.zoneId);
+    if (zone) {
+      const prev = (typeof lastHikage !== "undefined" && lastHikage)
+        ? { planeH: lastHikage.planeH, regA: lastHikage.regA, regB: lastHikage.regB }
+        : { planeH: 4, regA: 3, regB: 2 };
+      hikageCompute(zone, prev);
+    }
+    renderLayerList();
+    checked = true;
+  }
+
   const plan = docPlanContext();
-  const verdicts = state.layers.filter((l) => l.kind === "kisei").flatMap((l) => l.kisei.verdicts);
+  const verdicts = kiseiLayers.flatMap((l) => l.kisei.verdicts);
   c.variants.push({
     id: crypto.randomUUID(),
     name: name || defName,
@@ -78,7 +121,9 @@ function caseSaveVariant(caseId) {
   });
   casesSave(cases);
   renderCases();
-  toast(`「${name || defName}」を保存しました（ボリューム${volumes.length}件 + 法規チェック結果）`);
+  toast(checked
+    ? `「${name || defName}」を保存しました（斜線・天空率・日影の総合チェックを自動実行）`
+    : `「${name || defName}」を保存しました（斜線レイヤーがないため法規チェックは未実施）`);
 }
 
 function caseApplyVariant(caseId, variantId) {
@@ -99,9 +144,12 @@ function caseOkIcon(v) {
   return v === true ? "✅" : v === false ? "⚠" : "—";
 }
 
+let caseCompareCurrentId = null;
+
 function caseCompare(caseId) {
   const c = casesLoad().find((x) => x.id === caseId);
   if (!c || c.variants.length === 0) return;
+  caseCompareCurrentId = caseId;
   $("caseCompareTitle").textContent = `案の比較 — ${c.name}`;
   const body = $("caseCompareBody");
   body.innerHTML = "";
@@ -132,6 +180,10 @@ function caseCompare(caseId) {
   addRow("延床概算", c.variants.map((v) => v.plan.gfa),
     c.variants.map((v) => v.gfaNum === bestGfa));
   addRow("階数（概算）", c.variants.map((v) => v.plan.floors));
+  const minCost = Math.min(...c.variants.map((v) => caseCostMan(c, v)));
+  addRow(`工事費概算（${caseUsageDef(c)[1]} ${caseUsageDef(c)[2]}万円/m²）`,
+    c.variants.map((v) => caseCostText(c, v)),
+    c.variants.map((v) => caseCostMan(c, v) === minCost));
   addRow("斜線制限", c.variants.map((v) => `${caseOkIcon(v.ok.kisei)} ${v.plan.kisei}`));
   addRow("天空率", c.variants.map((v) => `${caseOkIcon(v.ok.tenku)} ${v.plan.tenku}`));
   addRow("日影（等時間）", c.variants.map((v) => `${caseOkIcon(v.ok.hikage)} ${v.plan.hikage}`));
@@ -139,11 +191,62 @@ function caseCompare(caseId) {
 
   const note = document.createElement("div");
   note.className = "muted stats-note";
-  note.textContent = "※法規チェックは各案の保存時点の簡易判定です。黄色ハイライト=延床最大・法規適合の案。案を適用して再チェックできます。";
+  note.textContent = "※法規チェックは各案の保存時点の簡易判定、工事費は延床×用途別単価の目安です。黄色ハイライト=延床最大・工事費最小・法規適合の案。案を適用して再チェックできます。";
   body.appendChild(note);
   $("caseCompareDialog").showModal();
 }
 $("caseCompareCloseBtn").onclick = () => $("caseCompareDialog").close();
+
+// ---------- 比較検討書（帳票出力） ----------
+async function caseCompareDoc(caseId) {
+  const c = casesLoad().find((x) => x.id === caseId);
+  if (!c || c.variants.length === 0) return null;
+  const usage = caseUsageDef(c);
+  const columns = [{ label: "項目", path: "item", width: "20%" }]
+    .concat(c.variants.map((v, i) => ({ label: v.name, path: `v${i}` })));
+  const rows = [];
+  const addRow = (item, fn) => rows.push(Object.fromEntries(
+    [["item", item], ...c.variants.map((v, i) => [`v${i}`, fn(v)])]));
+  addRow("保存日時", (v) => new Date(v.savedAt).toLocaleString("ja-JP"));
+  addRow("ボリューム数", (v) => `${v.volumes.length}件`);
+  addRow("最高高さ", (v) => `${v.maxH.toFixed(1)} m`);
+  addRow("建築面積", (v) => v.plan.footprint);
+  addRow("延床概算", (v) => v.plan.gfa);
+  addRow("階数（概算）", (v) => v.plan.floors);
+  addRow(`工事費概算（${usage[1]} ${usage[2]}万円/m²）`, (v) => caseCostText(c, v));
+  addRow("斜線制限", (v) => `${caseOkIcon(v.ok.kisei)} ${v.plan.kisei}`);
+  addRow("天空率", (v) => `${caseOkIcon(v.ok.tenku)} ${v.plan.tenku}`);
+  addRow("日影（等時間）", (v) => `${caseOkIcon(v.ok.hikage)} ${v.plan.hikage}`);
+
+  const template = {
+    id: "case-compare",
+    name: "ボリューム比較検討書",
+    blocks: [
+      { type: "title", text: "ボリューム比較検討書", subtitle: c.name },
+      { type: "meta-table", rows: [
+        ["案件名", c.name],
+        ["所在地", c.sitecheck?.placeName || "-"],
+        ["用途地域", c.sitecheck?.useDistrict || "-"],
+        ["想定用途（概算単価）", `${usage[1]}（${usage[2]}万円/m²）`],
+        ["作成日", "{now}"],
+      ]},
+      { type: "table", title: `比較表（${c.variants.length}案）`, source: "rows", columns },
+      { type: "screenshot", caption: "検討モデル（3Dビュー）" },
+      { type: "text", label: "備考",
+        text: "本書はPLATEAU配信データと本ツールの簡易判定（外接矩形近似・緩和規定未考慮）および用途別概算単価による参考資料です。工事費・法規適合の確定には見積・設計者による正式な検討を要します。" },
+    ],
+  };
+  const ctx = {
+    now: new Date().toLocaleDateString("ja-JP"),
+    rows,
+    screenshot: await captureCanvas(),
+  };
+  const html = ReportEngine.render(template, ctx);
+  const w = ReportEngine.openPrint(html);
+  if (!w) toast("ポップアップがブロックされました");
+  return html;
+}
+$("caseCompareDocBtn").onclick = () => caseCompareDoc(caseCompareCurrentId);
 
 // ---------- 一覧表示 ----------
 function renderCases() {
@@ -184,13 +287,34 @@ function renderCases() {
       : `作成 ${new Date(c.createdAt).toLocaleDateString("ja-JP")}（敷地条件調査なし）`;
     li.appendChild(info);
 
+    // 想定用途（工事費概算の単価に使用）
+    const usageRow = document.createElement("div");
+    usageRow.className = "layer-row";
+    const usageSel = document.createElement("select");
+    for (const [v, label, unit] of CASE_USAGES) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = `${label}（${unit}万円/m²）`;
+      if ((c.usage || "office") === v) o.selected = true;
+      usageSel.appendChild(o);
+    }
+    usageSel.title = "工事費概算に使う用途別単価（目安値）";
+    usageSel.onchange = () => {
+      const cases2 = casesLoad();
+      cases2.find((x) => x.id === c.id).usage = usageSel.value;
+      casesSave(cases2);
+      renderCases();
+    };
+    usageRow.append("用途", usageSel);
+    li.appendChild(usageRow);
+
     for (const v of c.variants) {
       const row = document.createElement("div");
       row.className = "layer-row";
       const label = document.createElement("span");
       label.style.flex = "1";
-      label.textContent = `${v.name} — ${v.plan.gfa} / 高${v.maxH.toFixed(0)}m ${caseOkIcon(v.ok.kisei)}${caseOkIcon(v.ok.tenku)}${caseOkIcon(v.ok.hikage)}`;
-      label.title = `斜線${caseOkIcon(v.ok.kisei)} / 天空率${caseOkIcon(v.ok.tenku)} / 日影${caseOkIcon(v.ok.hikage)}`;
+      label.textContent = `${v.name} — ${v.plan.gfa} / ${caseCostText(c, v)} / 高${v.maxH.toFixed(0)}m ${caseOkIcon(v.ok.kisei)}${caseOkIcon(v.ok.tenku)}${caseOkIcon(v.ok.hikage)}`;
+      label.title = `斜線${caseOkIcon(v.ok.kisei)} / 天空率${caseOkIcon(v.ok.tenku)} / 日影${caseOkIcon(v.ok.hikage)} / 工事費は${caseUsageDef(c)[1]}単価の目安`;
       const applyBtn = document.createElement("button");
       applyBtn.className = "tbtn";
       applyBtn.textContent = "適用";

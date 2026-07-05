@@ -439,6 +439,8 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* 案比較テーブル */
+#caseCompareDialog { width: 900px; }
+#caseCompareBody { overflow-x: auto; padding: 0 12px 4px; }
 .case-compare { min-width: 480px; }
 .case-compare .case-rowhead { font-weight: 600; white-space: nowrap; color: var(--muted); }
 .case-compare .case-best { background: rgba(242, 209, 62, 0.16); }

@@ -256,7 +256,7 @@ function kiseiAllowedHeight(k, x, y) {
   return allowed;
 }
 
-function kiseiJudge(layer) {
+function kiseiJudge(layer, silent) {
   const k = layer.kisei;
   k.verdicts = [];
   for (const target of state.layers) {
@@ -282,7 +282,7 @@ function kiseiJudge(layer) {
       over: Math.max(0, height - allowed),
     });
   }
-  if (k.verdicts.length > 0) {
+  if (!silent && k.verdicts.length > 0) {
     const ng = k.verdicts.filter((v) => !v.ok);
     toast(ng.length === 0
       ? `✅ 敷地内の計画建物 ${k.verdicts.length}件はすべて斜線制限に適合（参考判定）`
@@ -475,15 +475,12 @@ function tenkuSkyRatio(thetas) {
   return 1 - blocked / thetas.length;
 }
 
-function runTenku(layer) {
-  const k = layer.kisei;
+// 計算のみ（lastTenkuを更新して結果を返す。ダイアログ表示なし）
+function tenkuCompute(k) {
   const frame = k.frame;
   const { minX, minY, maxX, maxY } = frame.bbox;
   const planBoxes = kiseiCollectBoxes(frame);
-  if (planBoxes.length === 0) {
-    toast("敷地内に計画ボリューム/CADモデルがありません（建物差し替え等で配置してください）");
-    return;
-  }
+  if (planBoxes.length === 0) return null;
 
   // 測定点: 前面道路の反対側境界線上（中点）・地盤面高さ
   let px, py;
@@ -513,11 +510,19 @@ function runTenku(layer) {
   const ok = plan >= comp - 1e-9;
   lastTenku = { plan, comp, ok, roadSide: k.roadSide, roadWidth: k.roadWidth,
     date: new Date().toLocaleDateString("ja-JP") };
+  return { ...lastTenku, thetasPlan, thetasComp };
+}
 
-  renderTenkuDialog(thetasPlan, thetasComp);
-  toast(ok
-    ? `✅ 天空率: 計画 ${plan.toFixed(1)}% ≧ 適合建物 ${comp.toFixed(1)}% — 天空率による緩和の可能性あり（参考）`
-    : `⚠ 天空率: 計画 ${plan.toFixed(1)}% ＜ 適合建物 ${comp.toFixed(1)}% — このままでは緩和は見込めません（参考）`, 9000);
+function runTenku(layer) {
+  const r = tenkuCompute(layer.kisei);
+  if (!r) {
+    toast("敷地内に計画ボリューム/CADモデルがありません（建物差し替え等で配置してください）");
+    return;
+  }
+  renderTenkuDialog(r.thetasPlan, r.thetasComp);
+  toast(r.ok
+    ? `✅ 天空率: 計画 ${r.plan.toFixed(1)}% ≧ 適合建物 ${r.comp.toFixed(1)}% — 天空率による緩和の可能性あり（参考）`
+    : `⚠ 天空率: 計画 ${r.plan.toFixed(1)}% ＜ 適合建物 ${r.comp.toFixed(1)}% — このままでは緩和は見込めません（参考）`, 9000);
 }
 
 // 天空図（正射影）をキャンバスに描く
@@ -592,13 +597,11 @@ const HIKAGE_REGS = [
   ["5-3", "規制 5h/3h", 5, 3],
 ];
 
-function createHikageLayer(zoneLayer, opts) {
+// 計算のみ（lastHikageを更新して格子集計を返す。レイヤー生成なし）
+function hikageCompute(zoneLayer, opts) {
   const frame = kiseiLocalFrame(zoneLayer.zone.points);
   const boxes = kiseiCollectBoxes(frame);
-  if (boxes.length === 0) {
-    toast("敷地内に計画ボリューム/CADモデルがありません（建物差し替え等で配置してください）");
-    return null;
-  }
+  if (boxes.length === 0) return null;
   const { minX, minY, maxX, maxY } = frame.bbox;
   const carto = Cesium.Cartographic.fromCartesian(frame.origin);
   const lat = Cesium.Math.toDegrees(carto.latitude);
@@ -668,6 +671,18 @@ function createHikageLayer(zoneLayer, opts) {
   const ok = max5 <= opts.regA + 1e-6 && max10 <= opts.regB + 1e-6;
   lastHikage = { planeH: opts.planeH, regA: opts.regA, regB: opts.regB,
     max5, max10, ok, date: new Date().toLocaleDateString("ja-JP") };
+  return { frame, hours, nx, ny, gx0, gy0, gx1, gy1, pitch, max5, max10, ok };
+}
+
+function createHikageLayer(zoneLayer, opts) {
+  const r = hikageCompute(zoneLayer, opts);
+  if (!r) {
+    toast("敷地内に計画ボリューム/CADモデルがありません（建物差し替え等で配置してください）");
+    return null;
+  }
+  const { frame, hours, nx, ny, gx0, gy0, gx1, gy1, max5, max10, ok } = r;
+  const { minX, minY, maxX, maxY } = frame.bbox;
+  const carto = Cesium.Cartographic.fromCartesian(frame.origin);
 
   // ヒートマップキャンバス（北が上になるようyを反転して描く）
   const canvas = document.createElement("canvas");
