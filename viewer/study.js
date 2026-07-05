@@ -114,7 +114,9 @@ function caseSaveVariant(caseId) {
     volumes,
     gfaNum: volumes.reduce((s, v) =>
       s + v.width * v.depth * Math.max(1, Math.floor(v.height / 3.1)), 0),
-    maxH: Math.max(...volumes.map((v) => v.height)),
+    // 積層配置（タワー+低層棟）は天端 = 基準高さ+高さ − 最低基準 で評価
+    maxH: Math.max(...volumes.map((v) => (v.baseH || 0) + v.height))
+      - Math.min(...volumes.map((v) => v.baseH || 0)),
     plan,
     ok: {
       kisei: verdicts.length ? verdicts.every((v) => v.ok) : null,
@@ -244,6 +246,10 @@ async function caseCompareDoc(caseId) {
   addRow("天空率", (v) => `${caseOkIcon(v.ok.tenku)} ${v.plan.tenku}`);
   addRow("日影（等時間）", (v) => `${caseOkIcon(v.ok.hikage)} ${v.plan.hikage}`);
 
+  // 各案を順に適用して3Dビューを自動撮影（撮影後に元の構成へ復元）
+  toast("各案の3Dビューを撮影しています...");
+  const variantShots = await caseCaptureVariants(c);
+
   const blocks = [
     { type: "title", text: "ボリューム比較検討書", subtitle: c.name },
     { type: "meta-table", rows: [
@@ -254,6 +260,8 @@ async function caseCompareDoc(caseId) {
       ["作成日", "{now}"],
     ]},
     { type: "table", title: `比較表（${c.variants.length}案）`, source: "rows", columns },
+    { type: "images", title: "各案の3Dビュー", source: "variantShots",
+      columns: Math.min(2, Math.max(1, variantShots.length)), caption: true },
   ];
   const thumbs = c.variants.filter((v) => v.hikageThumb)
     .map((v) => ({ src: v.hikageThumb, caption: v.name }));
@@ -262,7 +270,6 @@ async function caseCompareDoc(caseId) {
       columns: Math.min(3, thumbs.length), caption: true });
   }
   blocks.push(
-    { type: "screenshot", caption: "検討モデル（3Dビュー）" },
     { type: "text", label: "備考",
       text: "本書はPLATEAU配信データと本ツールの簡易判定（外接矩形近似・緩和規定未考慮）および用途別概算単価による参考資料です。工事費・法規適合の確定には見積・設計者による正式な検討を要します。" });
   const template = { id: "case-compare", name: "ボリューム比較検討書", blocks };
@@ -270,7 +277,7 @@ async function caseCompareDoc(caseId) {
     now: new Date().toLocaleDateString("ja-JP"),
     rows,
     thumbs,
-    screenshot: await captureCanvas(),
+    variantShots,
   };
   const html = ReportEngine.render(template, ctx);
   const w = ReportEngine.openPrint(html);
@@ -278,6 +285,87 @@ async function caseCompareDoc(caseId) {
   return html;
 }
 $("caseCompareDocBtn").onclick = () => caseCompareDoc(caseCompareCurrentId);
+
+// ---------- 案件マップ（全案件をピン表示するポートフォリオビュー） ----------
+let casePins = [];
+
+function casePosition(c) {
+  if (c.sitecheck && Number.isFinite(parseFloat(c.sitecheck.lon))) {
+    return [parseFloat(c.sitecheck.lon), parseFloat(c.sitecheck.lat)];
+  }
+  if (c.camera && Number.isFinite(c.camera.lon)) return [c.camera.lon, c.camera.lat];
+  return null;
+}
+
+function caseToggleMap() {
+  if (casePins.length > 0) {
+    for (const e of casePins) viewer.entities.remove(e);
+    casePins = [];
+    requestRender();
+    return;
+  }
+  const cases = casesLoad();
+  const pts = [];
+  for (const c of cases) {
+    const pos = casePosition(c);
+    if (!pos) continue;
+    const cart = Cesium.Cartesian3.fromDegrees(pos[0], pos[1], 0);
+    pts.push(cart);
+    const okCount = c.variants.filter((v) => v.ok?.kisei === true).length;
+    const sub = c.variants.length === 0 ? "案なし"
+      : `案${c.variants.length}件 / 適合${okCount}件`;
+    casePins.push(viewer.entities.add({
+      position: cart,
+      point: {
+        pixelSize: 13,
+        color: Cesium.Color.fromCssColorString(okCount > 0 ? "#3ec97f" : "#f2913e"),
+        outlineColor: Cesium.Color.WHITE,
+        outlineWidth: 2,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      label: {
+        ...measureLabel(`📁 ${c.name}（${sub}）`),
+        pixelOffset: new Cesium.Cartesian2(0, -20),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    }));
+  }
+  if (pts.length === 0) {
+    toast("位置情報を持つ案件がありません");
+    return;
+  }
+  const bs = Cesium.BoundingSphere.fromPoints(pts);
+  viewer.camera.flyToBoundingSphere(bs, {
+    duration: 1.5,
+    offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-65), Math.max(bs.radius * 3.2, 2500)),
+  });
+  requestRender();
+  toast(`${pts.length}件の案件をマップ表示しました（緑=法規適合の案あり / もう一度押すと消えます）`);
+}
+$("caseMapBtn").onclick = () => caseToggleMap();
+
+// ---------- 各案の3Dビュー自動撮影（比較検討書用） ----------
+// 案を順に適用→撮影→元のボリューム構成に復元する
+async function caseCaptureVariants(c) {
+  const backup = serializeConstruction().volumes;
+  const shots = [];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (const v of c.variants) {
+    for (const l of state.layers.filter((x) => x.kind === "volume")) removeLayer(l);
+    restoreConstruction({ volumes: v.volumes });
+    requestRender();
+    await wait(700);
+    requestRender();
+    await wait(200);
+    shots.push({ src: await captureCanvas(), caption: v.name });
+  }
+  for (const l of state.layers.filter((x) => x.kind === "volume")) removeLayer(l);
+  restoreConstruction({ volumes: backup });
+  for (const k of state.layers.filter((l) => l.kind === "kisei")) kiseiJudge(k, true);
+  renderLayerList();
+  requestRender();
+  return shots;
+}
 
 // ---------- 案件一覧のCSV出力（Excel対応・経営層向け一覧） ----------
 function caseOkText(v) {

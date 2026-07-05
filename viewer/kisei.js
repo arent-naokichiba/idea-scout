@@ -262,11 +262,12 @@ function kiseiJudge(layer, silent) {
   for (const target of state.layers) {
     let pos = null, height = null, name = target.dataset.name;
     if (target.kind === "volume") {
-      pos = Cesium.Cartesian3.fromDegrees(target.volume.lon, target.volume.lat, 0);
+      pos = Cesium.Cartesian3.fromDegrees(target.volume.lon, target.volume.lat, target.volume.baseH || 0);
       height = target.volume.height;
     } else if (target.kind === "model") {
-      pos = Cesium.Cartesian3.fromDegrees(target.model.lon, target.model.lat, 0);
-      height = (target.model.buildHeight || 30) + (target.model.heightOffset || 0);
+      pos = Cesium.Cartesian3.fromDegrees(target.model.lon, target.model.lat,
+        target.model.baseHeight + (target.model.heightOffset || 0));
+      height = target.model.buildHeight || 30;
     } else {
       continue;
     }
@@ -274,12 +275,14 @@ function kiseiJudge(layer, silent) {
     const { minX, minY, maxX, maxY } = k.frame.bbox;
     if (l.x < minX - 1 || l.x > maxX + 1 || l.y < minY - 1 || l.y > maxY + 1) continue; // 敷地外
     const allowed = kiseiAllowedHeight(k, l.x, l.y);
+    // 天端高さ = 基準高さ（積層分）+ ボリューム高さ（敷地地盤基準）
+    const top = Math.max(0, l.z) + height;
     k.verdicts.push({
       name,
-      height,
+      height: top,
       allowed,
-      ok: height <= allowed + 0.01,
-      over: Math.max(0, height - allowed),
+      ok: top <= allowed + 0.01,
+      over: Math.max(0, top - allowed),
     });
   }
   if (!silent && k.verdicts.length > 0) {
@@ -416,15 +419,17 @@ function kiseiCollectBoxes(frame) {
     if (target.kind === "volume") {
       ({ lon, lat, baseH, width: w, depth: d, height: h } = target.volume);
     } else if (target.kind === "model") {
-      lon = target.model.lon; lat = target.model.lat; baseH = target.model.baseHeight;
+      lon = target.model.lon; lat = target.model.lat;
+      baseH = target.model.baseHeight + (target.model.heightOffset || 0);
       w = 20; d = 20;
-      h = (target.model.buildHeight || 30) + (target.model.heightOffset || 0);
+      h = target.model.buildHeight || 30;
     } else {
       continue;
     }
-    const l = frame.toLocal(Cesium.Cartesian3.fromDegrees(lon, lat, 0));
+    // 基準高さ込みでローカル化（タワー+低層棟のような積層ボリュームに対応）
+    const l = frame.toLocal(Cesium.Cartesian3.fromDegrees(lon, lat, baseH || 0));
     if (l.x < minX - 1 || l.x > maxX + 1 || l.y < minY - 1 || l.y > maxY + 1) continue;
-    boxes.push({ name, cx: l.x, cy: l.y, z0: 0, w, d, h });
+    boxes.push({ name, cx: l.x, cy: l.y, z0: Math.max(0, l.z), w, d, h });
   }
   return boxes;
 }

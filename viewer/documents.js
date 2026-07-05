@@ -189,7 +189,9 @@ function docPlanContext() {
     const fa = vols.reduce((s, l) => s + l.volume.width * l.volume.depth, 0);
     const gfaN = vols.reduce((s, l) =>
       s + l.volume.width * l.volume.depth * Math.max(1, Math.floor(l.volume.height / 3.1)), 0);
-    const maxH = Math.max(...vols.map((l) => l.volume.height));
+    // 積層配置（タワー+低層棟）は天端 = 基準高さ+高さ で評価する
+    const minBase = Math.min(...vols.map((l) => l.volume.baseH || 0));
+    const maxH = Math.max(...vols.map((l) => (l.volume.baseH || 0) + l.volume.height)) - minBase;
     const fl = Math.max(1, Math.floor(maxH / 3.1));
     const v0 = vols[0].volume;
     footprint = `${Math.round(fa).toLocaleString()} m²（${vols.length === 1 ? `${v0.width.toFixed(1)}×${v0.depth.toFixed(1)}m` : `${vols.length}棟`}）`;

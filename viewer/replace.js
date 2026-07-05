@@ -211,7 +211,48 @@ const MASSING_SHAPES = [
   ["l", "L字"],
   ["c", "コの字"],
   ["twin", "ツイン"],
+  ["tower", "タワー+低層棟"],
 ];
+
+// 形状ごとのボックス群（frameローカル座標・base=積み上げ開始高さ）
+// タワー+低層棟は低層部（〜12m）の上にタワーを積む
+function massingBoxes(shape, x0, y0, W, D, h) {
+  if (shape === "single") {
+    return [{ cx: x0 + W / 2, cy: y0 + D / 2, w: W, d: D, h, base: 0 }];
+  }
+  if (shape === "l") {
+    const t = Math.max(6, Math.min(W, D) * 0.45);
+    return [
+      { cx: x0 + W / 2, cy: y0 + t / 2, w: W, d: t, h, base: 0 },
+      { cx: x0 + t / 2, cy: y0 + t + (D - t) / 2, w: t, d: D - t, h, base: 0 },
+    ];
+  }
+  if (shape === "c") {
+    const t = Math.max(6, Math.min(W, D) * 0.4);
+    return [
+      { cx: x0 + W / 2, cy: y0 + t / 2, w: W, d: t, h, base: 0 },
+      { cx: x0 + t / 2, cy: y0 + t + (D - t) / 2, w: t, d: D - t, h, base: 0 },
+      { cx: x0 + W - t / 2, cy: y0 + t + (D - t) / 2, w: t, d: D - t, h, base: 0 },
+    ];
+  }
+  if (shape === "twin") {
+    const gap = Math.max(4, W * 0.12);
+    const w = (W - gap) / 2, d = D * 0.7;
+    return [
+      { cx: x0 + w / 2, cy: y0 + D / 2, w, d, h, base: 0 },
+      { cx: x0 + W - w / 2, cy: y0 + D / 2, w, d, h, base: 0 },
+    ];
+  }
+  // tower: 低層棟（全面・最大12m）+ その上に北寄りタワー
+  const hp = Math.min(12, Math.max(3.1, h * 0.3));
+  if (h - hp < 3) {
+    return [{ cx: x0 + W / 2, cy: y0 + D / 2, w: W, d: D, h, base: 0 }];
+  }
+  return [
+    { cx: x0 + W / 2, cy: y0 + D / 2, w: W, d: D, h: hp, base: 0 },
+    { cx: x0 + W / 2, cy: y0 + D * 0.65, w: W * 0.55, d: D * 0.5, h: h - hp, base: hp },
+  ];
+}
 
 // 敷地ヤードのレイヤーパネルに追加（construction.jsのrenderZoneRowsから呼ばれる）
 function renderMassingRow(layer, li) {
@@ -236,8 +277,55 @@ function renderMassingRow(layer, li) {
   btn.textContent = "⬜ 配置";
   btn.title = "敷地に計画ボリュームを自動配置（敷地内の既存ボリュームは置き換え）";
   btn.onclick = () => massingPlace(layer, shapeSel.value, Math.max(3, parseFloat(hIn.value) || 30));
-  row.append(shapeSel, "高さ", hIn, btn);
+  const farBtn = document.createElement("button");
+  farBtn.className = "tbtn";
+  farBtn.textContent = "容積MAX";
+  farBtn.title = "容積率いっぱいの延床になる高さを自動算定して配置（敷地条件調査済みならその容積率を使用）";
+  farBtn.onclick = () => massingFitFar(layer, shapeSel.value, hIn);
+  row.append(shapeSel, "高さ", hIn, btn, farBtn);
   li.appendChild(row);
+}
+
+// 容積率いっぱいの延床になる高さを求めて配置する
+function massingFitFar(zoneLayer, shape, hInput) {
+  let far = (typeof lastSiteCheck !== "undefined" && lastSiteCheck?.calc?.far) || null;
+  if (!far) {
+    const input = window.prompt("容積率(%)を入力してください:", "400");
+    if (input === null) return;
+    far = parseFloat(input);
+    if (!Number.isFinite(far) || far <= 0) return;
+  }
+  const frame = kiseiLocalFrame(zoneLayer.zone.points);
+  const { minX, minY, maxX, maxY } = frame.bbox;
+  const o = 3;
+  const W = maxX - minX - o * 2, D = maxY - minY - o * 2;
+  if (W < 6 || D < 6) {
+    toast("敷地が小さすぎます（10m角以上のヤードで使用してください）");
+    return;
+  }
+  const target = (zoneLayer.zone.area || (maxX - minX) * (maxY - minY)) * far / 100;
+  let h;
+  if (shape === "tower") {
+    // 低層棟12m（3層）を全面に取り、残り延床をタワーで消化
+    const probe = massingBoxes("tower", 0, 0, W, D, 100);
+    const faPod = probe[0].w * probe[0].d;
+    const faTower = probe[1].w * probe[1].d;
+    const remain = target - faPod * 3;
+    const towerFloors = Math.floor(remain / faTower);
+    if (towerFloors < 1) {
+      h = Math.max(3.1, Math.floor(target / faPod) * 3.1);
+    } else {
+      h = 12 + towerFloors * 3.1;
+    }
+  } else {
+    const faSum = massingBoxes(shape, 0, 0, W, D, 10)
+      .reduce((s, b) => s + b.w * b.d, 0);
+    h = Math.max(3.1, Math.floor(target / faSum) * 3.1);
+  }
+  h = Math.round(h * 10) / 10;
+  if (hInput) hInput.value = h;
+  massingPlace(zoneLayer, shape, h);
+  toast(`容積率${far}% → 目標延床 約${Math.round(target).toLocaleString()}m² から高さ${h}mを自動算定しました`, 8000);
 }
 
 function massingPlace(zoneLayer, shape, h) {
@@ -250,32 +338,7 @@ function massingPlace(zoneLayer, shape, h) {
     return;
   }
   const x0 = minX + o, y0 = minY + o;
-
-  // [cx, cy, w, d]（frameローカル座標）
-  let boxes = [];
-  if (shape === "single") {
-    boxes = [[x0 + W / 2, y0 + D / 2, W, D]];
-  } else if (shape === "l") {
-    const t = Math.max(6, Math.min(W, D) * 0.45);
-    boxes = [
-      [x0 + W / 2, y0 + t / 2, W, t],                    // 南バー
-      [x0 + t / 2, y0 + t + (D - t) / 2, t, D - t],      // 西ウィング
-    ];
-  } else if (shape === "c") {
-    const t = Math.max(6, Math.min(W, D) * 0.4);
-    boxes = [
-      [x0 + W / 2, y0 + t / 2, W, t],                    // 南バー
-      [x0 + t / 2, y0 + t + (D - t) / 2, t, D - t],      // 西ウィング
-      [x0 + W - t / 2, y0 + t + (D - t) / 2, t, D - t],  // 東ウィング
-    ];
-  } else if (shape === "twin") {
-    const gap = Math.max(4, W * 0.12);
-    const w = (W - gap) / 2, d = D * 0.7;
-    boxes = [
-      [x0 + w / 2, y0 + D / 2, w, d],
-      [x0 + W - w / 2, y0 + D / 2, w, d],
-    ];
-  }
+  const boxes = massingBoxes(shape, x0, y0, W, D, h);
 
   // 敷地内の既存ボリュームは置き換え（マッシングスタディの繰り返し用）
   const inSite = state.layers.filter((l) => {
@@ -285,13 +348,13 @@ function massingPlace(zoneLayer, shape, h) {
   });
   for (const l of inSite) removeLayer(l);
 
-  for (const [cx, cy, w, d] of boxes) {
-    const carto = Cesium.Cartographic.fromCartesian(frame.toWorld(cx, cy, 0));
+  for (const b of boxes) {
+    const carto = Cesium.Cartographic.fromCartesian(frame.toWorld(b.cx, b.cy, 0));
     restoreVolumeLayer({
       lon: Cesium.Math.toDegrees(carto.longitude),
       lat: Cesium.Math.toDegrees(carto.latitude),
-      baseH: carto.height,
-      width: w, depth: d, height: h,
+      baseH: carto.height + b.base,
+      width: b.w, depth: b.d, height: b.h,
     });
   }
   for (const k of state.layers.filter((l) => l.kind === "kisei")) kiseiJudge(k, true);
