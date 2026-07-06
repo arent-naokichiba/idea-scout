@@ -1,0 +1,34 @@
+# PLATEAU Viewer を GitHub Pages に静的デプロイする
+# （viewer/ は静的モードを備えており、サーバなしでカタログAPIを直接利用する）
+name: Deploy PLATEAU Viewer to GitHub Pages
+
+# 一時停止中: Pagesサイトの初回作成にはリポジトリ設定(Settings→Pages)が必要なため、
+# 有効化後に手動起動(workflow_dispatch)またはpushトリガーの復活で利用する
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: viewer
+      - id: deployment
+        uses: actions/deploy-pages@v4

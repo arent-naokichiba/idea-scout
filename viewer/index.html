@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLATEAU Viewer</title>
+<script>window.CESIUM_BASE_URL = "https://cdn.jsdelivr.net/npm/cesium@1.124.0/Build/Cesium/";</script>
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.124.0/Build/Cesium/Cesium.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.124.0/Build/Cesium/Widgets/widgets.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ヘッダー -->
+<header id="topbar">
+  <button id="menuBtn" class="tbtn menu-btn" title="メニュー">☰</button>
+  <div class="brand">PLATEAU <span>Viewer</span></div>
+
+  <div class="geocode-box">
+    <input id="geocodeInput" type="text" placeholder="住所・地名で移動（例: 東京駅）" autocomplete="off">
+    <div id="geocodeResults" class="dropdown hidden"></div>
+  </div>
+
+  <div class="topbar-controls">
+    <label class="ctrl" title="ベースマップ">
+      🗺
+      <select id="basemapSelect">
+        <option value="photo">航空写真</option>
+        <option value="std">標準地図</option>
+        <option value="pale">淡色地図</option>
+        <option value="dark">ダーク</option>
+        <option value="hist1970s">空中写真 1974〜78</option>
+        <option value="hist1960s">空中写真 1961〜69</option>
+      </select>
+    </label>
+    <label class="ctrl" title="描画品質（左: 高品質 / 右: 高速）">
+      品質 <input id="sseSlider" type="range" min="2" max="48" step="1" value="16">
+    </label>
+    <button id="shadowBtn" class="tbtn" title="影のON/OFF">影</button>
+    <button id="terrainBtn" class="tbtn" title="地形の起伏（地理院標高タイル）">⛰ 地形</button>
+    <button id="compareBtn" class="tbtn" title="左右比較（レイヤーごとに表示側を指定して比較）">⇔ 比較</button>
+    <span class="ctrl hidden" id="timeCtrl" title="時刻（日照シミュレーション）">
+      🕒 <input id="timeSlider" type="range" min="5" max="20" step="0.25" value="12">
+      <span id="timeLabel">12:00</span>
+      <button id="sunPlayBtn" class="tbtn" title="日影アニメーション（1日の影の動きを再生）">▶</button>
+      <select id="dateSelect" title="日付（日影規制の検討は冬至日が基準）">
+        <option value="today">今日</option>
+        <option value="equinox">春分</option>
+        <option value="summer">夏至</option>
+        <option value="winter">冬至</option>
+      </select>
+    </span>
+    <button id="measureBtn" class="tbtn" title="距離計測（クリックで測点追加 / ダブルクリックで確定）">📏 距離</button>
+    <button id="areaBtn" class="tbtn" title="面積計測（3点以上クリック / ダブルクリックで確定）">⬠ 面積</button>
+    <button id="walkBtn" class="tbtn" title="歩行者視点（クリック地点に立つ / WASDで移動）">🚶 歩行</button>
+    <button id="clipBtn" class="tbtn" title="断面クリップ（2点クリックで断面線を指定 / Rキーで反転 / 再クリックで解除）">✂ 断面</button>
+    <button id="sightBtn" class="tbtn" title="視線解析（視点→対象の2点をクリックして見通しを判定）">👁 視線</button>
+    <button id="craneBtn" class="tbtn" title="クレーン配置（設置地点をクリック→ブーム長・起伏角を設定して干渉チェック）">🏗 クレーン</button>
+    <button id="surveyBtn" class="tbtn" title="近隣調査（中心地点をクリック→半径内の建物を抽出してリスト化）">📋 調査</button>
+    <button id="sitecheckBtn" class="tbtn" title="敷地条件調査（地点クリック→用途地域・建蔽率・容積率・防火・高度地区を自動判定してボリューム試算）">🧾 敷地</button>
+    <button id="vehicleBtn" class="tbtn" title="車両走行パス（ルートをクリックで描く→車種の最小回転半径で旋回可否を判定）">🚚 車両</button>
+    <button id="zoneBtn" class="tbtn" title="ヤード作図（資材置き場・仮設事務所・仮囲い等の範囲をポリゴンで作図）">⬛ ヤード</button>
+    <button id="scheduleBtn" class="tbtn" title="工程管理（工程にレイヤーを紐づけて日付連動で現場配置を再現）">📅 工程</button>
+    <button id="recordBtn" class="tbtn" title="現場記録（地点をクリックして野帳メモ・写真・音声・動画を残す）">📌 記録</button>
+    <button id="reportBtn" class="tbtn" title="現在の表示と統計をHTMLレポートとして保存">📄 レポート</button>
+    <button id="docBtn" class="tbtn" title="帳票の生成（是正指示書・週報・調査台帳・カスタム）とCAD連携">🖨 帳票</button>
+    <button id="screenshotBtn" class="tbtn" title="スクリーンショットを保存">📷</button>
+    <button id="shareBtn" class="tbtn" title="現在の表示状態のURLをコピー">🔗 共有</button>
+    <button id="fpsBtn" class="tbtn" title="FPS表示">FPS</button>
+    <button id="homeBtn" class="tbtn" title="日本全体表示">🏠</button>
+  </div>
+</header>
+
+<div id="main">
+
+  <!-- 左サイドバー -->
+  <aside id="sidebar">
+    <nav class="tabs">
+      <button class="tab active" data-tab="search">検索</button>
+      <button class="tab" data-tab="layers">レイヤー <span id="layerCount" class="badge hidden">0</span></button>
+      <button class="tab" data-tab="sites">現場</button>
+      <button class="tab" data-tab="cases">案件</button>
+      <button class="tab" data-tab="records">記録</button>
+      <button class="tab" data-tab="bookmarks">視点</button>
+    </nav>
+
+    <!-- 検索タブ -->
+    <section id="tab-search" class="tab-body">
+      <div class="quickstart" id="quickstart">
+        <div class="qs-title">クイックスタート</div>
+        <div class="qs-buttons">
+          <button class="qs" data-city="千代田区" data-label="東京・千代田区">東京</button>
+          <button class="qs" data-city="大阪市" data-label="大阪市">大阪</button>
+          <button class="qs" data-city="名古屋市" data-label="名古屋市">名古屋</button>
+          <button class="qs" data-city="札幌市" data-label="札幌市">札幌</button>
+          <button class="qs" data-city="福岡市" data-label="福岡市">福岡</button>
+        </div>
+        <div class="qs-options">
+          <label class="chk"><input id="qsUrf" type="checkbox"> 用途地域を重ねる（都市計画）</label>
+          <label class="chk"><input id="qsFlood" type="checkbox"> 洪水浸水想定を重ねる（防災）</label>
+        </div>
+        <div class="qs-title" style="margin-top:10px;">全国ハザードマップ（重ねるハザードマップ）</div>
+        <div class="qs-buttons">
+          <button class="hz" data-id="hazard-flood" title="洪水浸水想定区域（想定最大規模）">洪水</button>
+          <button class="hz" data-id="hazard-tsunami" title="津波浸水想定">津波</button>
+          <button class="hz" data-id="hazard-hightide" title="高潮浸水想定区域">高潮</button>
+          <button class="hz" data-id="hazard-doseki" title="土砂災害警戒区域（土石流）">土石流</button>
+          <button class="hz" data-id="hazard-kyukeisha" title="土砂災害警戒区域（急傾斜地）">急傾斜</button>
+          <button class="hz" data-id="hazard-jisuberi" title="土砂災害警戒区域（地すべり）">地すべり</button>
+        </div>
+      </div>
+
+      <form id="searchForm">
+        <select id="searchScope" title="検索対象">
+          <option value="city">市区町村別（最新年度）</option>
+          <option value="composite">都道府県全域（年度別・経年比較用）</option>
+        </select>
+        <input id="searchQuery" type="text" placeholder="キーワード（データセット名）">
+        <div class="row">
+          <select id="searchPref"><option value="">都道府県</option></select>
+          <input id="searchCity" type="text" placeholder="市区町村">
+        </div>
+        <div class="row">
+          <select id="searchType"><option value="">種別（すべて）</option></select>
+          <label class="chk"><input id="search3dOnly" type="checkbox" checked> 3D Tilesのみ</label>
+        </div>
+        <button type="submit" class="primary">検索</button>
+      </form>
+
+      <div id="searchStatus" class="muted"></div>
+      <ul id="searchResults" class="result-list"></ul>
+
+      <div class="import-box">
+        <div class="qs-title">インポート — GeoJSON / glTF・GLB（BIM） / PLY（点群）</div>
+        <button id="importBtn" class="tbtn">ファイルを選択（マップへのドロップも可）</button>
+        <input id="importFile" type="file" accept=".geojson,.json,.glb,.gltf,.ply,application/geo+json,model/gltf-binary" multiple class="hidden">
+      </div>
+    </section>
+
+    <!-- レイヤータブ -->
+    <section id="tab-layers" class="tab-body hidden">
+      <div id="layerEmpty" class="muted center">
+        レイヤーがありません。<br>「検索」タブからデータセットを追加してください。
+      </div>
+      <ul id="layerList" class="layer-list"></ul>
+    </section>
+
+    <!-- 現場タブ（複数現場ダッシュボード） -->
+    <section id="tab-sites" class="tab-body hidden">
+      <button id="siteSaveBtn" class="primary">現在の状態を現場として保存</button>
+      <div class="muted" style="margin-top: 7px; line-height: 1.6;">
+        レイヤー構成・カメラ・作図（ヤード/クレーン/車両パス）・工程を現場単位で保存し、
+        切り替えられます。※BIMモデルとGeoJSON（ファイル由来）は保存対象外
+      </div>
+      <ul id="siteList" class="result-list"></ul>
+      <div id="siteEmpty" class="muted center">保存された現場はありません。</div>
+    </section>
+
+    <!-- 案件タブ（ボリューム比較スタディ） -->
+    <section id="tab-cases" class="tab-body hidden">
+      <div style="display:flex; gap:6px;">
+        <button id="caseNewBtn" class="primary" style="flex:1;">新規案件を作成</button>
+        <button id="caseMapBtn" class="tbtn" title="全案件をマップにピン表示（ポートフォリオビュー）">🗺</button>
+        <button id="caseCsvBtn" class="tbtn" title="全案件・全案の一覧をCSVで出力（Excel対応）">CSV</button>
+      </div>
+      <div class="muted" style="margin-top: 7px; line-height: 1.6;">
+        敷地検討を「案件」として束ね、計画ボリューム構成をA案/B案…として保存・比較できます。
+        案の保存時に法規チェック（斜線・天空率・日影）と工事費概算が自動記録されます。
+      </div>
+      <ul id="caseList" class="layer-list"></ul>
+      <div id="caseEmpty" class="muted center">案件はありません。</div>
+    </section>
+
+    <!-- 記録タブ（野帳・指摘管理） -->
+    <section id="tab-records" class="tab-body hidden">
+      <div class="row" style="display:flex; gap:6px;">
+        <select id="recordFilter" style="flex:1;">
+          <option value="all">すべて</option>
+          <option value="open">未対応</option>
+          <option value="doing">対応中</option>
+          <option value="done">完了</option>
+        </select>
+        <button id="recordCsvBtn" class="tbtn" title="記録一覧をCSVで保存">CSV</button>
+      </div>
+      <div class="muted" style="margin-top:6px;">ツールバーの「📌 記録」→地点クリックで追加。写真・音声・動画はこのブラウザ内（IndexedDB）に保存されます。</div>
+      <ul id="recordList" class="result-list"></ul>
+      <div id="recordEmpty" class="muted center">記録はありません。</div>
+    </section>
+
+    <!-- ブックマークタブ -->
+    <section id="tab-bookmarks" class="tab-body hidden">
+      <button id="addBookmarkBtn" class="primary">現在の視点を保存</button>
+      <ul id="bookmarkList" class="result-list"></ul>
+      <div id="bookmarkEmpty" class="muted center">保存された視点はありません。</div>
+    </section>
+  </aside>
+
+  <!-- 3Dビュー -->
+  <div id="cesiumContainer">
+    <div id="loadingOverlay"><div class="spinner"></div><div>読み込み中...</div></div>
+    <div id="tileProgress" class="hidden">タイル読み込み中 <span id="tileProgressCount"></span></div>
+    <div id="measureHint" class="hidden">クリックで測点を追加 / ダブルクリックで終了 / Escで中止</div>
+    <div id="splitSlider" class="hidden" title="ドラッグで比較位置を移動"><div class="split-handle">⇔</div></div>
+  </div>
+
+  <!-- 右: 属性パネル -->
+  <aside id="attrPanel" class="hidden">
+    <div class="panel-head">
+      <span id="attrTitle">地物の属性</span>
+      <div>
+        <button id="attrCopyBtn" class="tbtn" title="JSONとしてコピー">コピー</button>
+        <button id="attrCloseBtn" class="tbtn">✕</button>
+      </div>
+    </div>
+    <div id="attrActions" class="attr-actions"></div>
+    <input id="attrFilter" type="text" placeholder="属性名で絞り込み">
+    <div id="attrBody"></div>
+  </aside>
+</div>
+
+<!-- 工程管理パネル -->
+<div id="schedulePanel" class="hidden">
+  <div class="sched-head">
+    <span class="sched-title">📅 工程管理</span>
+    <span id="schedDate" class="sched-date"></span>
+    <button id="schedPlayBtn" class="tbtn">▶ 再生</button>
+    <button id="schedTodayBtn" class="tbtn">今日</button>
+    <button id="schedVideoBtn" class="tbtn" title="工程アニメーションをWebM動画として保存">🎬 動画</button>
+    <span class="grow"></span>
+    <button id="schedAddBtn" class="tbtn">＋ 工程</button>
+    <button id="schedImportBtn" class="tbtn" title="工程JSONを読み込み">読込</button>
+    <button id="schedExportBtn" class="tbtn" title="工程JSONを保存">保存</button>
+    <button id="schedSyncBtn" class="tbtn" title="外部の工程管理システムと連携">🔄 連携</button>
+    <button id="schedCloseBtn" class="tbtn">✕</button>
+  </div>
+  <div id="schedSync" class="hidden">
+    <span class="muted">サーバ連携:</span>
+    <button id="schedServerLoadBtn" class="tbtn" title="GET /api/schedule から読込">サーバ読込</button>
+    <button id="schedServerSaveBtn" class="tbtn" title="POST /api/schedule に保存（外部システムから参照可）">サーバ保存</button>
+    <span class="muted">外部URL:</span>
+    <input id="schedUrlIn" type="text" placeholder="https://…/schedule.json（工程管理システムのAPI）">
+    <button id="schedUrlBtn" class="tbtn">取得</button>
+    <label class="chk"><input id="schedAutoSync" type="checkbox"> 60秒ごと自動更新</label>
+    <button id="schedCsvBtn" class="tbtn" title="Excel・他社工程管理のCSV（名称/開始/終了/進捗列）を取り込み（Shift-JIS対応）">CSV読込</button>
+    <input id="schedCsvFile" type="file" accept=".csv,text/csv" class="hidden">
+  </div>
+  <input id="schedSlider" type="range" min="0" max="1000" value="0">
+  <div id="schedTasks"></div>
+  <input id="schedFile" type="file" accept=".json,application/json" class="hidden">
+</div>
+
+<!-- ステータスバー -->
+<footer id="statusbar">
+  <span id="cameraStatus"></span>
+  <span class="grow"></span>
+  <span id="statusMsg"></span>
+  <span class="credit">出典: 国土交通省 Project PLATEAU / 地理院タイル</span>
+</footer>
+
+<!-- データセット詳細ダイアログ -->
+<dialog id="detailDialog">
+  <div class="panel-head"><span id="detailTitle"></span><button id="detailCloseBtn" class="tbtn">✕</button></div>
+  <table id="detailTable"></table>
+  <div class="dialog-actions">
+    <button id="detailCopyUrlBtn" class="tbtn">URLをコピー</button>
+    <button id="detailAddBtn" class="primary">マップに追加</button>
+  </div>
+</dialog>
+
+<!-- 建物統計ダイアログ -->
+<dialog id="statsDialog">
+  <div class="panel-head"><span id="statsTitle"></span><button id="statsCloseBtn" class="tbtn">✕</button></div>
+  <div id="statsBody"></div>
+  <div class="dialog-actions">
+    <button id="statsCsvBtn" class="tbtn" title="集計対象の建物属性をCSVで保存（Excel対応）">CSVエクスポート</button>
+    <button id="statsGeojsonBtn" class="tbtn" title="建物中心点+属性をGeoJSONで保存（QGIS等で利用可）">GeoJSONエクスポート</button>
+  </div>
+</dialog>
+
+<!-- 近隣調査リストダイアログ -->
+<dialog id="surveyDialog">
+  <div class="panel-head"><span id="surveyTitle"></span><button id="surveyCloseBtn" class="tbtn">✕</button></div>
+  <div id="surveyBody"></div>
+  <div class="dialog-actions">
+    <button id="surveyCsvBtn" class="tbtn">CSVエクスポート</button>
+  </div>
+</dialog>
+
+<!-- 帳票・連携ダイアログ -->
+<dialog id="docDialog">
+  <div class="panel-head"><span>帳票・連携</span><button id="docCloseBtn" class="tbtn">✕</button></div>
+  <div id="docBody">
+    <div class="rec-row">
+      <label>テンプレート</label>
+      <select id="docTemplateSel" style="flex:1;"></select>
+      <button id="docEditBtn" class="tbtn" title="テンプレートJSONを編集してカスタム帳票を作る">✎ 編集</button>
+    </div>
+    <div class="rec-row" id="docRecordRow">
+      <label>対象の記録</label>
+      <select id="docRecordSel" style="flex:1;"></select>
+    </div>
+    <div class="rec-row">
+      <button id="docPrintBtn" class="primary" style="flex:1;">🖨 生成して印刷 / PDF保存</button>
+      <button id="docHtmlBtn" class="tbtn">HTML保存</button>
+    </div>
+    <div id="docEditor" class="hidden">
+      <div class="muted" style="margin: 4px 0;">
+        テンプレートはJSONで自由に定義できます（ブロック: title / text / meta-table / table / images / gantt / screenshot / pagebreak、
+        値の埋め込みは {project} {record.title} など）。保存するとテンプレート一覧に追加されます。
+      </div>
+      <textarea id="docTemplateJson" spellcheck="false"></textarea>
+      <div class="rec-row">
+        <button id="docSaveTemplateBtn" class="tbtn">保存</button>
+        <button id="docDeleteTemplateBtn" class="tbtn">選択中のカスタムを削除</button>
+      </div>
+    </div>
+    <div class="rec-heading"><span>🔗 外部連携エクスポート / インポート</span></div>
+    <div class="rec-row">
+      <button id="dxfBtn" class="tbtn">📐 DXF書き出し（CAD）</button>
+      <button id="bcfBtn" class="tbtn" title="現場記録・指摘をBCF 2.1でBIMツール（Revit/Navisworks/Solibri等）へ">🏢 BCF書き出し（BIM指摘連携）</button>
+    </div>
+    <div class="rec-row">
+      <button id="pkgExportBtn" class="tbtn" title="記録（写真・音声・動画含む）・工程・現場・テンプレを1つのZIPに">📦 プロジェクト一式を書き出し</button>
+      <button id="pkgImportBtn" class="tbtn" title="書き出したプロジェクトZIPを読み込み（別PC・別ブラウザへの引っ越し）">📦 読み込み</button>
+      <input id="pkgFile" type="file" accept=".zip,application/zip" class="hidden">
+    </div>
+    <div class="muted">DXF: AutoCAD/Jw_cad等（レイヤー分け・単位m）。BCF: BIM指摘管理の業界標準。パッケージ: PC⇔スマホ・チーム間のデータ移動に。</div>
+  </div>
+</dialog>
+
+<!-- 現場記録ダイアログ -->
+<dialog id="recordDialog">
+  <div class="panel-head"><span id="recordTitleHead">現場記録</span><button id="recordCloseBtn" class="tbtn">✕</button></div>
+  <div id="recordBody"></div>
+</dialog>
+<input id="recPhotoFile" type="file" accept="image/*" capture="environment" multiple class="hidden">
+<input id="recVideoFile" type="file" accept="video/*" capture="environment" class="hidden">
+<input id="replGlbFile" type="file" accept=".glb,.gltf,model/gltf-binary" class="hidden">
+
+<!-- 敷地条件調査ダイアログ -->
+<dialog id="sitecheckDialog">
+  <div class="panel-head"><span id="sitecheckTitle"></span><button id="sitecheckCloseBtn" class="tbtn">✕</button></div>
+  <div id="sitecheckBody"></div>
+  <div class="dialog-actions">
+    <button id="sitecheckDocBtn" class="tbtn">🖨 敷地条件調査書を出力（印刷/PDF）</button>
+  </div>
+</dialog>
+
+<!-- 案比較ダイアログ -->
+<dialog id="caseCompareDialog">
+  <div class="panel-head"><span id="caseCompareTitle"></span><button id="caseCompareCloseBtn" class="tbtn">✕</button></div>
+  <div id="caseCompareBody"></div>
+  <div class="dialog-actions">
+    <button id="caseCompareDocBtn" class="tbtn">🖨 比較検討書を出力（印刷/PDF）</button>
+  </div>
+</dialog>
+
+<!-- 天空率比較ダイアログ -->
+<dialog id="tenkuDialog">
+  <div class="panel-head"><span>天空率比較（簡易）</span><button id="tenkuCloseBtn" class="tbtn">✕</button></div>
+  <div id="tenkuBody"></div>
+</dialog>
+
+<!-- 写真マークアップダイアログ -->
+<dialog id="markupDialog">
+  <div class="panel-head">
+    <span>写真マークアップ</span>
+    <div>
+      <select id="markupColor">
+        <option value="#e02020">赤</option>
+        <option value="#ffd166">黄</option>
+        <option value="#2979ff">青</option>
+        <option value="#ffffff">白</option>
+      </select>
+      <select id="markupWidth">
+        <option value="3">細</option>
+        <option value="6" selected>中</option>
+        <option value="12">太</option>
+      </select>
+      <button id="markupUndoBtn" class="tbtn">↩ 戻す</button>
+      <button id="markupCancelBtn" class="tbtn">キャンセル</button>
+      <button id="markupSaveBtn" class="tbtn">保存</button>
+    </div>
+  </div>
+  <canvas id="markupCanvas"></canvas>
+</dialog>
+
+<div id="toast" class="hidden"></div>
+
+<script src="vendor/mvt.js"></script>
+<script src="gsi-terrain.js"></script>
+<script src="mvt-layer.js"></script>
+<script src="static-api.js"></script>
+<script src="app.js"></script>
+<script src="construction.js"></script>
+<script src="schedule.js"></script>
+<script src="sites.js"></script>
+<script src="records.js"></script>
+<script src="pointcloud.js"></script>
+<script src="report-engine.js"></script>
+<script src="documents.js"></script>
+<script src="zip.js"></script>
+<script src="interop.js"></script>
+<script src="replace.js"></script>
+<script src="sitecheck.js"></script>
+<script src="kisei.js"></script>
+<script src="study.js"></script>
+</body>
+</html>
